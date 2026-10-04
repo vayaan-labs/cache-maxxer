@@ -2,8 +2,12 @@
   "name": "cache-maxxer",
   "displayName": "Cache Maxxer",
   "version": "1.0.0",
-  "description": "Shows the prompt cache's countdown and hit rate, explains every cache break, and can keep the cache warm on purpose",
+  "description": "Shows the prompt cache's countdown and hit rate above the input box, explains every cache break and cache expiry, and can keep the cache warm to cut Claude Code cost",
   "author": { "name": "Soham Patankar" },
+  "license": "MIT",
+  "homepage": "https://github.com/vayaan-labs/cache-maxxer",
+  "repository": "https://github.com/vayaan-labs/cache-maxxer",
+  "keywords": ["prompt cache", "cache hit rate", "claude code cost", "cache expiry", "keep warm", "statusline", "token usage"],
   "types": "./types/index.d.ts",
   "userConfig": {
     "ttl": {
