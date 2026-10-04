@@ -1,0 +1,31 @@
+{
+  "name": "cache-maxxer",
+  "displayName": "Cache Maxxer",
+  "version": "1.0.0",
+  "description": "Shows the prompt cache's countdown and hit rate, explains every cache break, and can keep the cache warm on purpose",
+  "author": { "name": "Soham Patankar" },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "ttl": {
+      "type": "string",
+      "title": "Cache length",
+      "description": "How long the prompt cache lives. Auto reads it from your session; 1h suits a subscription, 5m many API keys.",
+      "options": ["auto", "1h", "5m"],
+      "default": "auto"
+    },
+    "lead": {
+      "type": "string",
+      "title": "Keep warm lead time",
+      "description": "How long before the cache expires the warning shows and keep warm sends its ping. Auto is 4 minutes for a 1h cache and 40 seconds for 5m.",
+      "options": ["auto", "1m", "2m", "4m", "8m"],
+      "default": "auto"
+    },
+    "idle_cap": {
+      "type": "string",
+      "title": "Stop keeping warm after idle for",
+      "description": "Keep warm stops pinging once you have not sent anything for this long, so a forgotten session does not keep spending.",
+      "options": ["1h", "3h", "8h", "none"],
+      "default": "3h"
+    }
+  }
+}
