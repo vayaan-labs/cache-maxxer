@@ -4,11 +4,11 @@
 
 Claude Code keeps your conversation in a prompt cache, so each new message does not pay full price to re-read everything said before it. That cache runs out after an idle spell, and Claude Code never tells you. The next message then pays to write the whole conversation again, which costs more and answers slower. Cache Maxxer puts the cache's countdown and hit rate above your input box like a status line, tells you why whenever the cache breaks or expires, and can keep it warm to cut your Claude Code cost.
 
-![The Cache Maxxer band above the input box in a terminal: a green countdown at 59:46 with a track, a 100% hit rate on the last request and 92% over the session, 38K tokens of context, 138K read and 12K written, about $0.23 saved, and the buttons Keep warm, Warm now and Details.](assets/band.png)
+![The Cache Maxxer band above the input box in a terminal: a green countdown at 58:53 with a track, a 100% hit rate on the last request and 89% over the session, 38K tokens of context, 67K read and 8.4K written, about $0.10 saved, and the buttons Keep warm: on, Warm now and Details.](assets/band.png)
 
 ## Why the cache matters
 
-While the cache is warm, each request reads your conversation at a small fraction of the normal input price. Once it expires, the next message writes the whole conversation back in. With the prices built into Cache Maxxer for Opus 5.5 ($4 per million tokens of plain input, $0.20 to read from the cache and $8 to write to an hour-long cache), a 180K token conversation costs about 4 cents to read and about $1.44 to write again after a lapse. How long the cache lives depends on how you sign in: typically an hour with a subscription and five minutes with many API keys. Cache Maxxer reads which one you have from your session.
+While the cache is warm, each request reads your conversation at a small fraction of the normal input price. Once it expires, the next message writes the whole conversation back in. With the prices built into Cache Maxxer for Opus 5.5 ($4 per million tokens of plain input, $0.20 to read from the cache and $8 to write to an hour-long cache), a 180K token conversation costs about 4 cents to read and about $1.44 to write again after a lapse. How long the cache lives depends on how you sign in, either an hour or five minutes, and Cache Maxxer reads which one you have from your session.
 
 ## Know where your cache stands
 
@@ -40,7 +40,19 @@ Keep warm stops once you have not sent anything for the idle cap (three hours un
 
 ## The Details pane
 
-Press Details, or run `/cache`, for the pane. It opens with the countdown and the cache's state, with Warm now and the Keep warm toggle beside them. Below that it shows the session's numbers, the recent requests, the latest cache break with its cause, and the keep-warm settings while Keep warm is on.
+Press Details, or run `/cache`, for the pane. It takes three to five lines, so it stays out of the way of your conversation.
+
+![The Details pane in a terminal: a green countdown at 54:08, a 1 hour cache marked Warm, and the buttons Warm now, Keep warm: off and Compact on the same line; below, the session's hit rate, requests, tokens read, written and uncached, and dollars saved and spent on writes; below that, one row of request bars with a legend for read, written, uncached and break.](assets/pane-terminal.png)
+
+The first line is the status: the countdown, how long your cache lives, and its state (Warm, Expiring soon, or Expired). The buttons sit on the same line: Warm now while the cache is live, the Keep warm toggle, and Compact. The second line holds the session's numbers: hit rate, requests, tokens read, written and uncached, and, for models with a known price, the dollars saved and spent on writes. On a narrow window the numbers drop from the end rather than wrapping. The third line is the history, one bar for each of the last requests with the newest on the right, and a legend for read, written, uncached and break.
+
+When the cache has broken, one more line gives the latest break: when it happened, how much was re-written, roughly what that cost and why, with a count of earlier breaks. It is absent while there are none.
+
+While Keep warm is on, the pane adds a last line with two pickers, how long before expiry to ping and when to stop after you have been idle, next to a count of the pings so far and what they cost. If keep warm has stopped because you were idle, it says so there.
+
+![The Details pane with Keep warm on: the same status, numbers and history lines, then a line with the pickers "Ping: automatically before expiry" and "Stop: after 3 hours idle", and "No pings yet."](assets/pane-terminal-keep-warm.png)
+
+In the Desktop app the pane has the same lines, with the status and the history drawn as small graphics and a Close button.
 
 ## Get started
 
@@ -62,7 +74,7 @@ Tested with Claude Code 2.1.289 on macOS, in the terminal. The Desktop app route
 
 ## Settings
 
-Cache Maxxer has three settings, each a choice from a short list. In a session, open `/plugin`, go to the Installed tab and choose Configure options on Cache Maxxer. In a terminal, `claude plugin configure cache-maxxer@vayaan-labs` shows them. Or put them in your settings file, using the plugin's id:
+Cache Maxxer has three settings, each a choice from a short list. In a terminal, `claude plugin configure cache-maxxer@vayaan-labs` shows them. Or put them in your settings file, using the plugin's id:
 
 ```json
 {

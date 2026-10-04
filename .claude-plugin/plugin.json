@@ -13,7 +13,7 @@
     "ttl": {
       "type": "string",
       "title": "Cache length",
-      "description": "How long the prompt cache lives. Auto reads it from your session; 1h suits a subscription, 5m many API keys.",
+      "description": "How long the prompt cache lives. Auto reads it from your session; or fix it at 1h or 5m.",
       "options": ["auto", "1h", "5m"],
       "default": "auto"
     },
