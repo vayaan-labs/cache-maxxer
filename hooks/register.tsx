@@ -429,7 +429,7 @@ export const register: Register = (on, options) => {
     const v = await viewOf($, cfg)
     const actions = paneActions($, cfg)
     const el = $.ui.resolve(e)
-    if (e.surface === 'desktop') return desktopPane(el as ElementTable<'desktop'>, v, actions)
+    if (e.surface === 'desktop') return desktopPane(el as ElementTable<'desktop'>, v, e.props.bodyColumns, actions)
     return terminalPane(el as ElementTable<'terminal'>, v, e.props.bodyColumns, actions)
   })
 

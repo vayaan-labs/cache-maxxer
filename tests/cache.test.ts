@@ -156,9 +156,8 @@ fiveMinute('a rebuilt cache is explained once, and subagent requests do not coun
 
   const ui = await pane($, 'terminal')
   const text = await textsOf(ui)
-  expect(text).toContain('Requests')
   // Two main requests: the subagent's one is not among them.
-  expect((await ui.find({ type: 'Text', text: '2' }))?.text).toBe('2')
+  expect(text).toContain('2 requests')
   expect(text).toContain('182K re-written')
   expect(text).toContain('expired after 63m idle')
 })
@@ -194,7 +193,7 @@ fiveMinute('the first request after /clear is told apart from a fresh session, a
   await $.session.end({ reason: 'clear' } as never)
   await request({ read: 0, written: 60_000, uncached: 20, output: 300 })
   expect(toasts).toEqual(['Cache rebuilt · 60K tokens re-written · cleared'])
-  expect((await (await pane($, 'terminal')).find({ type: 'Text', text: '1' }))?.text).toBe('1')
+  expect(await textsOf(await pane($, 'terminal'))).toContain('1 request')
 })
 
 fiveMinute('keep warm pings once at the lead time and restarts the entry', async ($, on) => {
@@ -416,30 +415,49 @@ slow('as the room narrows the band drops pieces in order and keeps the countdown
   for (const [columns, gone] of steps) expect(await shown(columns), `${columns} columns`).toEqual({ ...all, ...gone })
 })
 
-fiveMinute('the pane shows the session, the chart, the breaks and the keep-warm controls on both surfaces', async ($, on) => {
+fiveMinute('the pane is three lines of status, with the breaks and keep-warm pickers only when there is something to show', async ($, on) => {
   const { clock, request } = await boot($, on)
   for (const use of THREE) await request(use)
   await clock.advance(5 * MINUTE)
   await request({ read: 0, written: 63_000, uncached: 20, output: 100 })
 
   for (const surface of ['terminal', 'desktop'] as const) {
-    const ui = await pane($, surface)
+    const ui = await pane($, surface, 160)
     const text = await textsOf(ui)
-    for (const part of ['This session', 'Requests', 'Hit rate', 'Tokens read', 'Estimated savings', 'Breaks', 'Keep warm', 'A ping is one short request that reads the cached context and resets its timer.']) {
+    // The numbers line: hit rate, requests, tokens and the money items, each labelled once.
+    for (const part of ['hit', '4 requests', 'read', 'written', 'uncached', 'saved ~$', 'writes ~$']) {
       expect(text, `${surface}: ${part}`).toContain(part)
     }
+    // The latest break on one line, no heading and no explanation sentence.
+    expect(text).toContain('Last break')
     expect(text).toContain('63K re-written')
     expect(text).toContain('prefix changed (system prompt, tools or MCP servers)')
-    expect((await ui.findAll({ type: 'Button' })).map(b => b.props.label)).toEqual(['Keep warm: off', 'Warm now', 'Compact', 'Close'])
-    expect(await ui.find({ key: 'lead' })).toBeDefined()
+    for (const gone of ['This session', 'Breaks', 'A ping is one short request']) expect(text, `${surface}: ${gone}`).not.toContain(gone)
+    expect((await ui.findAll({ type: 'Button' })).map(b => b.props.label)).toEqual([
+      'Warm now',
+      'Keep warm: off',
+      'Compact',
+      ...(surface === 'terminal' ? [] : ['Close']),
+    ])
     if (surface === 'desktop') expect((await ui.findAll({ type: 'Svg' })).length).toBe(2)
+    // With keep warm off the pickers are not drawn.
+    expect(await ui.find({ key: 'lead' })).toBeUndefined()
 
-    // The controls change what the pane then shows.
+    // Keep warm on brings its pickers and the pings line; the pickers change what is shown.
     await ui.press({ key: 'keep' })
     expect((await ui.find({ key: 'keep' }))?.props.label).toBe('Keep warm: on')
+    expect((await ui.find({ key: 'keep' }))?.props.variant).toBe('primary')
+    expect(await textsOf(ui)).toContain('No pings yet.')
     await ui.select({ key: 'lead', value: '2m' })
     expect((await ui.find({ key: 'lead' }))?.props.value).toBe('2m')
     await ui.press({ key: 'keep' })
+    expect(await ui.find({ key: 'lead' })).toBeUndefined()
     await ui.unmount()
   }
+
+  // Compact stays reachable once the cache has expired, where Warm now is no longer offered.
+  await clock.advance(10 * MINUTE)
+  const expired = await pane($, 'terminal')
+  expect((await expired.findAll({ type: 'Button' })).map(b => b.props.label)).toEqual(['Keep warm: off', 'Compact'])
+  expect(await textsOf(expired)).toContain('expired')
 })
