@@ -23,7 +23,7 @@ const RECHECK_MS = 10 * 60_000
 const RETRY_MS = 15_000
 
 // What the band and the pane draw. A value here survives a reload of the module; /clear, /resume
-// and /branch put every one back to its default.
+// and /branch put every one back to its default (a /clear keeps only what the cache last held).
 const cacheAtom = atom({ plugin: 'cache-maxxer', key: 'cache' } as const, EMPTY_CACHE)
 const historyAtom = atom({ plugin: 'cache-maxxer', key: 'history' } as const, [])
 const totalsAtom = atom({ plugin: 'cache-maxxer', key: 'totals' } as const, EMPTY_TOTALS)
@@ -174,13 +174,19 @@ async function tick($: EngineInterface, cfg: Cfg) {
   if (!result.ok) {
     rt.skippedFor = cache.startedAt
     $.ui.toast(`Keep warm skipped: ${result.reason}`)
+  } else if (result.hasLapsed) {
+    $.ui.toast(pingText(result))
   }
 }
 
-type PingResult = { ok: true; read: number; costUsd: number | null } | { ok: false; reason: string }
+type PingResult =
+  | { ok: true; read: number; written: number; costUsd: number | null; hasLapsed: boolean }
+  | { ok: false; reason: string }
 
 // One short request over the conversation. Its cache read restarts the entry's life from the
-// moment the request started.
+// moment the request started. When it read less than half of what the cache last held, the entry
+// had already gone and the request rebuilt it: it is warm now, but that was a rebuild, not a ping
+// that kept it warm.
 async function ping($: EngineInterface, cfg: Cfg): Promise<PingResult> {
   if (rt.isPinging) return { ok: false, reason: 'a ping is already running' }
   if (rt.isTurnRunning) return { ok: false, reason: 'Claude is working' }
@@ -207,15 +213,17 @@ async function ping($: EngineInterface, cfg: Cfg): Promise<PingResult> {
       { read: usage.cache_read_input_tokens, written: usage.cache_creation_input_tokens, uncached: usage.input_tokens, output: usage.output_tokens },
       ttl,
     )
+    const hasLapsed = cache.cached > 0 && usage.cache_read_input_tokens < cache.cached / 2
     await update($, cacheAtom, c => (startedAt > c.startedAt ? { ...c, startedAt } : c))
     await update($, pingsAtom, p => ({
-      count: p.count + 1,
-      read: p.read + usage.cache_read_input_tokens,
+      count: hasLapsed ? p.count : p.count + 1,
+      read: hasLapsed ? p.read : p.read + usage.cache_read_input_tokens,
+      rebuilds: hasLapsed ? p.rebuilds + 1 : p.rebuilds,
       costUsd: p.costUsd + (costUsd ?? 0),
       isPriced: p.isPriced || costUsd !== null,
     }))
     startTicker($, cfg)
-    return { ok: true, read: usage.cache_read_input_tokens, costUsd }
+    return { ok: true, read: usage.cache_read_input_tokens, written: usage.cache_creation_input_tokens, costUsd, hasLapsed }
   } catch (error) {
     return { ok: false, reason: error instanceof Error ? error.message : String(error) }
   } finally {
@@ -223,10 +231,13 @@ async function ping($: EngineInterface, cfg: Cfg): Promise<PingResult> {
   }
 }
 
-const pingText = (r: PingResult) =>
-  r.ok
-    ? `Cache warmed · ${fmtTokens(r.read)} tokens read${r.costUsd === null ? '' : ` · ~${fmtUsd(r.costUsd)}`}`
-    : `Could not warm the cache: ${r.reason}`
+const pingText = (r: PingResult) => {
+  if (!r.ok) return `Could not warm the cache: ${r.reason}`
+  const cost = r.costUsd === null ? '' : ` · ~${fmtUsd(r.costUsd)}`
+  return r.hasLapsed
+    ? `The cache had already lapsed; the ping rebuilt it · ${fmtTokens(r.written)} tokens written${cost}`
+    : `Cache warmed · ${fmtTokens(r.read)} tokens read${cost}`
+}
 
 async function warmNow($: EngineInterface, cfg: Cfg) {
   $.ui.toast(pingText(await ping($, cfg)))
@@ -267,7 +278,8 @@ async function seedSettings($: EngineInterface, cfg: Cfg) {
 
 // A new conversation has no cache of its own yet. The keep-warm settings stay.
 async function resetConversation($: EngineInterface) {
-  await update($, cacheAtom, () => EMPTY_CACHE)
+  // What was cached stays, so the first request after /clear can still be told apart from a fresh session's.
+  await update($, cacheAtom, c => ({ ...EMPTY_CACHE, cached: c.cached }))
   await update($, historyAtom, () => [])
   await update($, totalsAtom, () => EMPTY_TOTALS)
   await update($, breaksAtom, () => [])
@@ -342,7 +354,7 @@ export const register: Register = (on, options) => {
     if (e.source !== 'clear' && e.seconds_since_last_response !== undefined) {
       const idleMs = e.seconds_since_last_response * 1000
       const startedAt = (await $.clock.now()) - idleMs
-      await update($, cacheAtom, c => ({ ...c, startedAt, model: e.model ?? '', ctx: e.context_tokens ?? 0 }))
+      await update($, cacheAtom, c => ({ ...c, startedAt, model: e.model ?? '', ctx: e.context_tokens ?? 0, cached: e.context_tokens ?? 0 }))
       rt.pending = e.prompt_cache_likely_expired ? { kind: 'idle', idleMs } : null
       startTicker($, cfg)
       void learnTtl($, cfg)
@@ -404,10 +416,12 @@ export const register: Register = (on, options) => {
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const v = await viewOf($, cfg)
     if (e.props.hasSurvey || v.cache.startedAt === 0 || e.props.view.agentId) return next(e)
+    // What the mods after this one draw here stays, under the band.
+    const rest = await next(e)
     const actions = bandActions($, cfg)
     const el = $.ui.resolve(e)
-    if (e.surface === 'desktop') return desktopBand(el as ElementTable<'desktop'>, v, e.props.bodyColumns, actions)
-    return terminalBand(el as ElementTable<'terminal'>, v, e.props.bodyColumns, actions)
+    if (e.surface === 'desktop') return desktopBand(el as ElementTable<'desktop'>, v, e.props.bodyColumns, actions, rest)
+    return terminalBand(el as ElementTable<'terminal'>, v, e.props.bodyColumns, actions, rest)
   })
 
   on('ui.render', { component: 'Pane' }, async ($, e, next) => {

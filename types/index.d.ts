@@ -10,13 +10,15 @@ export type Req = {
 }
 
 // The conversation's cache: when the last request that read or wrote it started (0 before one),
-// how long an entry lives (null until the transcript has shown a write), the model that wrote it
-// and the size of the context its next request sends.
+// how long an entry lives (null until the transcript has shown a write), the model that wrote it,
+// the size of the context its next request sends, and what the last main request read plus wrote
+// (0 before one), which is what a later request is compared with to tell whether the prefix was lost.
 export type CacheState = {
   startedAt: number
   ttlMs: number | null
   model: string
   ctx: number
+  cached: number
 }
 
 // Session totals. The dollar figures count only requests whose model has a known price.
@@ -44,10 +46,12 @@ export type CacheSettings = {
   idleCap: string
 }
 
-// Keep-warm pings made so far this session.
+// Keep-warm pings made so far this session. A ping that found the cache already gone and rebuilt it
+// is counted in `rebuilds`, not in `count` or `read`; its cost is in `costUsd` with the rest.
 export type Pings = {
   count: number
   read: number
+  rebuilds: number
   costUsd: number
   isPriced: boolean
 }

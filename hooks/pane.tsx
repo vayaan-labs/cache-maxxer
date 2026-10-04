@@ -4,7 +4,7 @@ import type { Req } from '../types'
 import { COLORS, colorProps, textPx } from './band'
 import { fmtClock, fmtLocalTime, fmtTokens, fmtUsd } from './format'
 import { HISTORY_LIMIT } from './model'
-import { stateTone, stateWord, sessionHitRate, ttlLabel, type Tone, type View } from './view'
+import { pingsLine, stateTone, stateWord, sessionHitRate, ttlLabel, type Tone, type View } from './view'
 
 export type PaneActions = {
   toggleKeepWarm: () => void
@@ -249,11 +249,7 @@ function body(el: Common, v: View, a: PaneActions, pieces: Pieces) {
       </Box>
       <Select key="lead" label="Ping this long before expiry" options={LEAD_OPTIONS} value={v.settings.lead} onSelect={a.setLead} />
       <Select key="cap" label="Stop after idle for" options={CAP_OPTIONS} value={v.settings.idleCap} onSelect={a.setIdleCap} />
-      <Text>
-        {pings.count === 0
-          ? 'No pings yet.'
-          : `${pings.count} ping${pings.count === 1 ? '' : 's'} so far · ${fmtTokens(pings.read)} tokens read${pings.isPriced ? ` · ~${fmtUsd(pings.costUsd)}` : ''}`}
-      </Text>
+      <Text>{pingsLine(pings)}</Text>
       {v.settings.keepWarm && v.paused ? <Text color={COLORS.muted}>{`Paused: you have been idle for ${v.paused}.`}</Text> : null}
       <Text color={COLORS.muted}>{PING_SENTENCE}</Text>
       <Box flexDirection="row" columnGap={1} marginTop={1}>

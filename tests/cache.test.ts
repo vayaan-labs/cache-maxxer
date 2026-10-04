@@ -71,6 +71,8 @@ async function boot($: Engine, on: On, transcript: { path: string; tail: string 
   on('process.run', (_$, e) => ({
     value: { exitCode: 0, stdout: e.argv[0] === '/usr/bin/find' ? transcript.path : transcript.tail, stderr: '' },
   }) as never)
+  on('classic.SessionStart', () => ({}) as never)
+  on('session.end', () => ({ sessionId: 'session-1' }) as never)
   on('session.start', () => ({ cwd: '/work' }))
   on('command.register', () => ({ value: undefined }) as never)
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
@@ -120,10 +122,13 @@ test('every cache break names its cause', () => {
   ]
   for (const [name, input, cause] of rows) expect(inferCause(input), name).toBe(cause)
 
-  // A break writes more than 20K tokens and more than half of what the request sent.
-  expect(isBreak(20_000, 30_000)).toBe(false)
-  expect(isBreak(25_000, 60_000)).toBe(false)
-  expect(isBreak(25_000, 30_000)).toBe(true)
+  // A break writes more than 20K tokens and reads less than half of what the last request cached.
+  expect(isBreak(20_000, 0, 60_000), 'a small write').toBe(false)
+  expect(isBreak(60_000, 0, 0), 'no earlier request to lose a prefix from').toBe(false)
+  expect(isBreak(30_000, 25_000, 25_000), 'a big new message on a prefix that was read').toBe(false)
+  expect(isBreak(30_000, 30_000, 60_000), 'half of the prefix still read').toBe(false)
+  expect(isBreak(30_000, 29_999, 60_000), 'less than half read').toBe(true)
+  expect(isBreak(60_000, 0, 60_000), 'the prefix was lost').toBe(true)
 })
 
 test('the entry life is read from the newest cache write in the transcript', () => {
@@ -158,6 +163,40 @@ fiveMinute('a rebuilt cache is explained once, and subagent requests do not coun
   expect(text).toContain('expired after 63m idle')
 })
 
+fiveMinute('a big new message on a cached prefix is no break, and a lost prefix is', async ($, on) => {
+  const { toasts, request } = await boot($, on)
+  await request({ read: 0, written: 25_000, uncached: 20, output: 300 })
+  // A large file read early on: 30K tokens written, the 25K prefix still read.
+  await request({ read: 25_000, written: 30_000, uncached: 20, output: 300 })
+  expect(toasts).toEqual([])
+
+  await request({ read: 0, written: 55_000, uncached: 20, output: 300 })
+  expect(toasts).toEqual(['Cache rebuilt · 55K tokens re-written · prefix changed (system prompt, tools or MCP servers)'])
+})
+
+fiveMinute('a resumed session starts from the context it had, so a lapsed one is a break and a warm one is not', async ($, on) => {
+  const { toasts, request } = await boot($, on)
+  const resume = (idleSeconds: number, isExpired: boolean) =>
+    $.classic.SessionStart({ source: 'resume', seconds_since_last_response: idleSeconds, context_tokens: 150_000, prompt_cache_likely_expired: isExpired, model: OPUS } as never)
+
+  await resume(100, false)
+  await request({ read: 150_000, written: 30_000, uncached: 20, output: 300 })
+  expect(toasts).toEqual([])
+
+  await resume(7200, true)
+  await request({ read: 0, written: 180_000, uncached: 20, output: 300 })
+  expect(toasts).toEqual(['Cache rebuilt · 180K tokens re-written · expired after 2h idle'])
+})
+
+fiveMinute('the first request after /clear is told apart from a fresh session, and the totals start over', async ($, on) => {
+  const { toasts, request } = await boot($, on)
+  await request({ read: 0, written: 60_000, uncached: 20, output: 300 })
+  await $.session.end({ reason: 'clear' } as never)
+  await request({ read: 0, written: 60_000, uncached: 20, output: 300 })
+  expect(toasts).toEqual(['Cache rebuilt · 60K tokens re-written · cleared'])
+  expect((await (await pane($, 'terminal')).find({ type: 'Text', text: '1' }))?.text).toBe('1')
+})
+
 fiveMinute('keep warm pings once at the lead time and restarts the entry', async ($, on) => {
   const { clock, toasts, fork, request } = await boot($, on)
   await keepWarmOn($)
@@ -175,6 +214,32 @@ fiveMinute('keep warm pings once at the lead time and restarts the entry', async
   expect(await textsOf(ui)).toMatch(/4:[0-9]{2}/)
   expect(await textsOf(ui)).toContain('kept warm ×1')
   expect(toasts).toEqual([])
+})
+
+fiveMinute('a ping that finds the cache already gone says it rebuilt it and does not count as keeping it warm', async ($, on) => {
+  const { clock, toasts, fork, request } = await boot($, on)
+  await keepWarmOn($)
+  await request({ read: 0, written: 60_000, uncached: 30, output: 100 })
+  fork.answer = async () => ({
+    isAnswered: true,
+    text: 'ok',
+    usage: { input_tokens: 12, output_tokens: 3, cache_read_input_tokens: 0, cache_creation_input_tokens: 61_000 },
+  })
+
+  await clock.advance(265 * 1000)
+  expect(fork.calls).toBe(1)
+  expect(toasts).toEqual(['The cache had already lapsed; the ping rebuilt it · 61K tokens written · ~$0.31'])
+
+  // The rebuilt entry is warm from the ping on, and the count line does not call it a kept-warm ping.
+  await clock.advance(30 * 1000)
+  expect(fork.calls).toBe(1)
+  const ui = await band($, 'terminal')
+  const line = await textsOf(ui)
+  expect(line).toMatch(/Cache 4:[0-9]{2}/)
+  expect(line).toContain('rebuilt ×1')
+  expect(line).not.toContain('kept warm')
+  const details = await pane($, 'terminal')
+  expect(await textsOf(details)).toContain('No ping has kept it warm yet · 1 rebuilt a lapsed cache · ~$0.31')
 })
 
 fiveMinute('keep warm waits for a running turn, and pings once it ends', async ($, on) => {
@@ -296,6 +361,8 @@ slow('the band shows the countdown, hit rates, context, totals and savings on bo
   expect(line).toContain('121K read · 64K written')
   expect(line).toContain('saved ~$0.20')
   expect((await terminal.findAll({ type: 'Button' })).map(b => b.props.label)).toEqual(['Keep warm: off', 'Warm now', 'Details'])
+  // What the mods after this one draw in the same place stays, drawn after the band.
+  expect(line.endsWith('drawn by Claude Code')).toBe(true)
 
   const desktop = await band($, 'desktop')
   const svg = await desktop.find({ type: 'Svg' })
@@ -303,6 +370,7 @@ slow('the band shows the countdown, hit rates, context, totals and savings on bo
     expect(svg?.props.alt).toContain(part)
   }
   expect(String(svg?.props.source)).toContain('>97%<')
+  expect(await textsOf(desktop)).toContain('drawn by Claude Code')
   expect((await desktop.findAll({ type: 'Button' })).map(b => b.props.label)).toEqual(['Keep warm: off', 'Warm now', 'Details'])
   await terminal.unmount()
   await desktop.unmount()
@@ -324,7 +392,8 @@ slow('as the room narrows the band drops pieces in order and keeps the countdown
     const text = await textsOf(ui)
     await ui.unmount()
     return {
-      spark: /│ [▁-█]+$/.test(text),
+      // The stand-in's own drawing follows the band
+      spark: /│ [▁-█]+drawn by Claude Code$/.test(text),
       saved: text.includes('saved'),
       totals: text.includes('written'),
       track: text.includes('▕'),

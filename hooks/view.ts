@@ -1,5 +1,5 @@
 import type { BreakInfo, CacheSettings, CacheState, Pings, Req, Totals } from '../types'
-import { fmtClock, pct } from './format'
+import { fmtClock, fmtTokens, fmtUsd, pct } from './format'
 import { writeCostUsd } from './pricing'
 import { ttlInfo, type TtlInfo } from './ttl'
 
@@ -62,6 +62,16 @@ export function rewriteCost(v: View): number | null {
 // What the person sees of how long an entry lives: the length, or the assumed hour.
 export const ttlLabel = (v: View): string =>
   v.ttl.ms >= 600_000 ? (v.ttl.isKnown ? '1 hour cache' : '1 hour (assumed)') : '5 minute cache'
+
+// The pings so far, in the pane. A ping that rebuilt a lapsed cache is told apart from one that kept it warm.
+export function pingsLine(p: Pings): string {
+  if (p.count === 0 && p.rebuilds === 0) return 'No pings yet.'
+  const parts = [p.count > 0 ? `${p.count} ping${p.count === 1 ? '' : 's'} so far` : 'No ping has kept it warm yet']
+  if (p.count > 0) parts.push(`${fmtTokens(p.read)} tokens read`)
+  if (p.rebuilds > 0) parts.push(`${p.rebuilds} rebuilt a lapsed cache`)
+  if (p.isPriced) parts.push(`~${fmtUsd(p.costUsd)}`)
+  return parts.join(' · ')
+}
 
 // What /cache says where nothing draws (a -p run).
 export function summaryText(v: View): string {

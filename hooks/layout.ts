@@ -95,10 +95,14 @@ export function buildSegments(v: View): Seg[] {
   return segs
 }
 
+// Pings that found the cache already gone are counted apart: they rebuilt it rather than kept it warm.
 function keepWarmNote(v: View): string | null {
-  if (v.settings.keepWarm && v.paused) return `keep warm paused (idle ${v.paused})`
-  if (v.settings.keepWarm && v.pings.count > 0) return `kept warm ×${v.pings.count}`
-  return null
+  if (!v.settings.keepWarm) return null
+  if (v.paused) return `keep warm paused (idle ${v.paused})`
+  const parts: string[] = []
+  if (v.pings.count > 0) parts.push(`kept warm ×${v.pings.count}`)
+  if (v.pings.rebuilds > 0) parts.push(`rebuilt ×${v.pings.rebuilds}`)
+  return parts.length > 0 ? parts.join(' · ') : null
 }
 
 const groupChanges = (line: readonly Seg[]) => line.reduce((n, s, i) => n + (i > 0 && line[i - 1]!.group !== s.group ? 1 : 0), 0)

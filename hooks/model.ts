@@ -4,7 +4,7 @@ import type { BreakInfo, CacheSettings, CacheState, Pings, Req, Totals } from '.
 import { fmtIdle } from './format'
 import { savingsUsd, writeCostUsd } from './pricing'
 
-export const EMPTY_CACHE: CacheState = { startedAt: 0, ttlMs: null, model: '', ctx: 0 }
+export const EMPTY_CACHE: CacheState = { startedAt: 0, ttlMs: null, model: '', ctx: 0, cached: 0 }
 export const EMPTY_TOTALS: Totals = {
   requests: 0,
   read: 0,
@@ -15,7 +15,7 @@ export const EMPTY_TOTALS: Totals = {
   isPriced: false,
 }
 
-export const EMPTY_PINGS: Pings = { count: 0, read: 0, costUsd: 0, isPriced: false }
+export const EMPTY_PINGS: Pings = { count: 0, read: 0, rebuilds: 0, costUsd: 0, isPriced: false }
 export const DEFAULT_SETTINGS: CacheSettings = { keepWarm: false, lead: 'auto', idleCap: '3h' }
 
 export const HISTORY_LIMIT = 48
@@ -25,8 +25,11 @@ const BREAK_MIN_WRITE = 20_000
 // What happened to the conversation since its last request that can explain a rebuild.
 export type Pending = { kind: 'cleared' } | { kind: 'compacted' } | { kind: 'idle'; idleMs: number } | null
 
-// A request that wrote more than 20K tokens and more than half of what it sent re-wrote the context.
-export const isBreak = (written: number, totalInput: number): boolean => written > BREAK_MIN_WRITE && written > totalInput / 2
+// The cached prefix is lost when a request writes a lot and reads less than half of what the
+// previous request cached. Nothing was lost when that total is 0 (no earlier request), or when a big
+// new message is written on top of a prefix that was read.
+export const isBreak = (written: number, read: number, previouslyCached: number): boolean =>
+  written > BREAK_MIN_WRITE && read < previouslyCached / 2
 
 export function inferCause(a: {
   gapMs: number | null
@@ -65,11 +68,9 @@ export function applyRequest(
     output: usage.output_tokens,
   }
   const totalInput = tokens.read + tokens.written + tokens.uncached
-  const isFirst = s.totals.requests === 0 && s.cache.startedAt === 0 && pending === null
-  const rebuilt = !isFirst && isBreak(tokens.written, totalInput)
 
   let brk: BreakInfo | null = null
-  if (rebuilt) {
+  if (isBreak(tokens.written, tokens.read, s.cache.cached)) {
     brk = {
       at: r.startedAt,
       written: tokens.written,
@@ -90,6 +91,7 @@ export function applyRequest(
     ttlMs: s.cache.ttlMs,
     model: usage.model,
     ctx: totalInput + tokens.output,
+    cached: tokens.read + tokens.written,
   }
   const saved = savingsUsd(usage.model, tokens, r.ttlMs)
   const cost = writeCostUsd(usage.model, tokens.written, r.ttlMs)

@@ -69,7 +69,7 @@ const terminalWidth = (s: Seg) => runsText(terminalRuns(s)).length
 
 const SEPARATOR: Run = { text: ' │ ', tone: 'muted' }
 
-export function terminalBand(el: ElementTable<'terminal'>, v: View, columns: number, a: Actions) {
+export function terminalBand(el: ElementTable<'terminal'>, v: View, columns: number, a: Actions, rest: JSX.Element) {
   const { Box, Text, Button } = el
   const [line = []] = planLines(buildSegments(v), terminalWidth, SEPARATOR.text.length, columns, false)
   const runs: Run[] = []
@@ -91,6 +91,7 @@ export function terminalBand(el: ElementTable<'terminal'>, v: View, columns: num
           <Button key={b.key} label={b.label} onPress={b.press} {...(b.isPrimary ? { variant: 'primary' as const } : {})} />
         ))}
       </Box>
+      {rest}
     </Box>
   )
 }
@@ -217,20 +218,23 @@ export function svgBand(lines: readonly (readonly Seg[])[]): { source: string; w
 // The SVG for the room it has, in pixels: one line, or two when one cannot hold the band.
 const desktopSvg = (v: View, room: number) => svgBand(planLines(buildSegments(v), segPx, SEP_PX, room, true))
 
-export function desktopBand(el: ElementTable<'desktop'>, v: View, columns: number, a: Actions) {
+export function desktopBand(el: ElementTable<'desktop'>, v: View, columns: number, a: Actions, rest: JSX.Element) {
   const { Box, Svg, Button } = el
   const buttons = buttonSpecs(v, a)
   const buttonsPx = buttons.reduce((n, b) => n + b.label.length * 7.2 + 30, 0) + (buttons.length - 1) * 8
   const room = Math.max(160, columns * CELL_PX - buttonsPx - 24)
   const svg = desktopSvg(v, room)
   return (
-    <Box flexDirection="row" flexWrap="wrap" alignItems="center" columnGap={2}>
-      <Svg source={svg.source} alt={svg.alt} width={svg.width} height={svg.height} />
-      <Box flexDirection="row" columnGap={1} alignItems="center">
-        {buttons.map(b => (
-          <Button key={b.key} label={b.label} onPress={b.press} {...(b.isPrimary ? { variant: 'primary' as const } : {})} />
-        ))}
+    <Box flexDirection="column">
+      <Box flexDirection="row" flexWrap="wrap" alignItems="center" columnGap={2}>
+        <Svg source={svg.source} alt={svg.alt} width={svg.width} height={svg.height} />
+        <Box flexDirection="row" columnGap={1} alignItems="center">
+          {buttons.map(b => (
+            <Button key={b.key} label={b.label} onPress={b.press} {...(b.isPrimary ? { variant: 'primary' as const } : {})} />
+          ))}
+        </Box>
       </Box>
+      {rest}
     </Box>
   )
 }

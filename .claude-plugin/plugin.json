@@ -1,5 +1,6 @@
 {
   "name": "cache-maxxer",
+  "displayName": "Cache Maxxer",
   "version": "1.0.0",
   "description": "Shows the prompt cache's countdown and hit rate, explains every cache break, and can keep the cache warm on purpose",
   "author": { "name": "Soham Patankar" },
