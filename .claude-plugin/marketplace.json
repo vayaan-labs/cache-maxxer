@@ -1,0 +1,13 @@
+{
+  "name": "vayaan-mods",
+  "owner": { "name": "Soham Patankar" },
+  "metadata": { "description": "Claude Code mods by Soham Patankar" },
+  "plugins": [
+    {
+      "name": "cache-maxxer",
+      "source": "./",
+      "description": "Shows the prompt cache's countdown and hit rate, explains every cache break, and can keep the cache warm on purpose",
+      "version": "1.0.0"
+    }
+  ]
+}
