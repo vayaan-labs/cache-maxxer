@@ -8,7 +8,7 @@ Claude Code keeps your conversation in a prompt cache, so each new message does 
 
 ## Why the cache matters
 
-While the cache is warm, each request reads your conversation at a small fraction of the normal input price. Once it expires, the next message writes the whole conversation back in. With the prices built into Cache Maxxer for Opus 5.5 ($4 per million tokens of plain input, $0.20 to read from the cache and $8 to write to an hour-long cache), a 180K token conversation costs about 4 cents to read and about $1.44 to write again after a lapse. How long the cache lives depends on how you sign in, either an hour or five minutes, and Cache Maxxer reads which one you have from your session.
+While the cache is warm, each request reads your conversation at a small fraction of the normal input price. Once it expires, the next message writes the whole conversation back in. With the prices built into Cache Maxxer for Opus 5.5 ($4 per million tokens of plain input, $0.20 to read from the cache and $8 to write to an hour-long cache), a 180K token conversation costs about 4 cents to read and about $1.44 to write again after a lapse. A cache lives for either an hour or five minutes. Cache Maxxer uses your `ttl` setting if you set one, and otherwise reads the length from your session: the newest cache write in the session transcript, or the length Claude Code reports when you switch model. Until it has seen one it assumes an hour.
 
 ## Know where your cache stands
 
@@ -40,15 +40,15 @@ Keep warm stops once you have not sent anything for the idle cap (three hours un
 
 ## The Details pane
 
-Press Details, or run `/cache`, for the pane. It takes three to five lines, so it stays out of the way of your conversation.
+Press Details, or run `/cache`, for the pane. In a terminal it takes at most five lines, from 80 columns up, so it stays out of the way of your conversation.
 
 ![The Details pane in a terminal: a green countdown at 54:08, a 1 hour cache marked Warm, and the buttons Warm now, Keep warm: off and Compact on the same line; below, the session's hit rate, requests, tokens read, written and uncached, and dollars saved and spent on writes; below that, one row of request bars with a legend for read, written, uncached and break.](assets/pane-terminal.png)
 
-The first line is the status: the countdown, how long your cache lives, and its state (Warm, Expiring soon, or Expired). The buttons sit on the same line: Warm now while the cache is live, the Keep warm toggle, and Compact. The second line holds the session's numbers: hit rate, requests, tokens read, written and uncached, and, for models with a known price, the dollars saved and spent on writes. On a narrow window the numbers drop from the end rather than wrapping. The third line is the history, one bar for each of the last requests with the newest on the right, and a legend for read, written, uncached and break.
+The first line is the status: the countdown, how long your cache lives, and its state (Warm or Expiring soon; once the cache has run out the countdown reads expired). The buttons sit on the same line: Warm now while the cache is live, the Keep warm toggle, and Compact. Where that line is too narrow, the cache length shortens to 1h or 5m and then goes, and then the state word. In a wide terminal Claude Code docks the pane at the side, where it is narrower than the terminal: the buttons then take a line of their own under the status, and in the narrowest pane they share two lines with it. The second line holds the session's numbers: hit rate, requests, tokens read, written and uncached, and, for models with a known price, the dollars saved and spent on writes. On a narrow window the numbers drop from the end rather than wrapping. The third line is the history, one bar for each of the last requests with the newest on the right, and a legend for read, written, uncached and break. When the status and buttons take two lines and both a latest break and the keep-warm line are showing, the history is left out so the pane stays within five lines.
 
 When the cache has broken, one more line gives the latest break: when it happened, how much was re-written, roughly what that cost and why, with a count of earlier breaks. It is absent while there are none.
 
-While Keep warm is on, the pane adds a last line with two pickers, how long before expiry to ping and when to stop after you have been idle, next to a count of the pings so far and what they cost. If keep warm has stopped because you were idle, it says so there.
+While Keep warm is on, the pane adds a last line with two pickers, how long before expiry to ping and when to stop after you have been idle, next to a count of the pings so far and what they cost. If keep warm has stopped because you were idle, it says so there. The line never wraps: where the room is short the pickers use shorter wording and the pings drop their details from the end.
 
 ![The Details pane with Keep warm on: the same status, numbers and history lines, then a line with the pickers "Ping: automatically before expiry" and "Stop: after 3 hours idle", and "No pings yet."](assets/pane-terminal-keep-warm.png)
 
@@ -84,7 +84,7 @@ Cache Maxxer has three settings, each a choice from a short list. In a terminal,
 }
 ```
 
-`ttl` is how long the cache lives: `auto` (the default) reads it from the newest cache write in your session transcript after each turn and assumes an hour, shown as "1h?", until it knows. `1h` and `5m` fix it.
+`ttl` is how long the cache lives: `auto` (the default) reads it from the newest cache write in your session transcript after each turn, or from the length Claude Code reports when you switch model, and assumes an hour, shown as "1h?", until it knows. `1h` and `5m` fix it.
 
 `lead` is how long before expiry the notice and the ping come: `auto` is 4 minutes for an hour cache and 40 seconds for five minutes, or pick 1, 2, 4 or 8 minutes (never more than half the cache's life).
 
@@ -92,12 +92,12 @@ Cache Maxxer has three settings, each a choice from a short list. In a terminal,
 
 ## Privacy
 
-Cache Maxxer makes no network requests of its own and has no server, account or analytics. The one thing that leaves your machine because of it is the keep-warm ping, and it goes where all your messages already go: Cache Maxxer asks Claude Code to send one very short request ("Reply with exactly one word: ok. Do not use any tools.") over your conversation. It sends one only when keep warm is on and the cache is about to expire, or when you press Warm now or run `/cache warm`. It counts toward your usage like any other request.
+Cache Maxxer makes no network requests of its own and has no server, account or analytics. What leaves your machine because of it is a request Claude Code makes for you, to the same place all your messages already go. One is the keep-warm ping: Cache Maxxer asks Claude Code to send one very short request ("Reply with exactly one word: ok. Do not use any tools.") over your conversation. It sends one only when keep warm is on and the cache is about to expire, or when you press Warm now or run `/cache warm`. It counts toward your usage like any other request. The other is the compaction you start by pressing Compact.
 
 Everything else stays local, and this is all it runs or reads:
 
-- To learn the cache length, it runs `find` to locate your session's transcript under your Claude config folder (`CLAUDE_CONFIG_DIR`, or `~/.claude`) and `tail` to read only the last 256 KB of it. It never reads the whole transcript, and it only does this when `ttl` is `auto`.
-- When you press Compact, it asks Claude Code to compact the conversation.
+- To learn the cache length, it runs `find` to locate your session's transcript under your Claude config folder (`CLAUDE_CONFIG_DIR`, or `~/.claude`) and `tail` to read at most the last 256 KiB of it, which is the whole file when the transcript is shorter than that. It looks only at the cache-write token counts in what it reads, and it only does this when `ttl` is `auto`.
+- When you press Compact, it asks Claude Code to compact the conversation, which is a request to the model.
 - It remembers the keep-warm toggle in the plugin's own saved data. Everything else it tracks (the numbers behind the band and pane) lives in memory for the session.
 
 ## Updating and removing

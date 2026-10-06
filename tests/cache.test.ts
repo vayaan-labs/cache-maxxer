@@ -102,6 +102,44 @@ const pane = ($: Engine, surface: 'terminal' | 'desktop', columns = 80) =>
 const textsOf = async (ui: { findAll: (q: { type: string }) => Promise<{ text: string }[]> }) =>
   (await ui.findAll({ type: 'Text' })).map(t => t.text).join('')
 
+type Drawn = { type?: string; props?: { flexDirection?: string }; children?: unknown[] }
+
+// The lines a drawn pane takes: a row is one line, a column is its children stacked.
+function linesOf(node: unknown): number {
+  const drawn = node as Drawn
+  if (typeof node === 'string' || drawn.type !== 'Box') return 1
+  const kids = (drawn.children ?? []).map(linesOf)
+  return drawn.props?.flexDirection === 'column' ? kids.reduce((a, b) => a + b, 0) : Math.max(1, ...kids)
+}
+
+// The rows made only of text that are wider than the pane: text that would wrap.
+const textIn = (node: unknown): string => (typeof node === 'string' ? node : ((node as Drawn).children ?? []).map(textIn).join(''))
+function overflowing(node: unknown, width: number): string[] {
+  const drawn = node as Drawn
+  if (typeof node === 'string' || drawn.type !== 'Box') return []
+  const kids = drawn.children ?? []
+  const isTextRow = drawn.props?.flexDirection !== 'column' && kids.length > 0 && kids.every(k => (k as Drawn).type === 'Text')
+  if (isTextRow) return textIn(node).length > width ? [textIn(node)] : []
+  return kids.flatMap(k => overflowing(k, width))
+}
+
+// The pane's own width in a real terminal is not the terminal's: inline at 76 columns in one 80 wide,
+// docked at the side at 49 in one 120 wide and 71 in one 160 wide, and as narrow as 38 just past the
+// width where it docks. The pane holds to five lines on both surfaces at each of these.
+const PANE_WIDTHS = [38, 49, 71, 76, 104, 200]
+
+async function expectFiveLines($: Engine, state: string) {
+  for (const surface of ['terminal', 'desktop'] as const) {
+    for (const columns of PANE_WIDTHS) {
+      const ui = await $.ui.mount({ plugin: 'cache-maxxer', surface, component: 'Pane', requestId: 'cache-maxxer', props: PANE(columns) })
+      const [root] = await ui.findAll({ type: 'Box' })
+      expect(linesOf(root), `${state}, ${surface}, ${columns} wide`).toBeLessThanOrEqual(5)
+      if (surface === 'terminal') expect(overflowing(root, columns), `${state}, ${columns} wide: text wider than the pane`).toEqual([])
+      await ui.unmount()
+    }
+  }
+}
+
 // Three requests of a long conversation: 97% of the last one read from the cache.
 const THREE: Use[] = [
   { read: 0, written: 60_400, uncached: 30, output: 300 },
@@ -237,7 +275,8 @@ fiveMinute('a ping that finds the cache already gone says it rebuilt it and does
   expect(line).toMatch(/Cache 4:[0-9]{2}/)
   expect(line).toContain('rebuilt ×1')
   expect(line).not.toContain('kept warm')
-  const details = await pane($, 'terminal')
+  // The whole line is there where the room allows it.
+  const details = await pane($, 'terminal', 160)
   expect(await textsOf(details)).toContain('No ping has kept it warm yet · 1 rebuilt a lapsed cache · ~$0.31')
 })
 
@@ -460,4 +499,47 @@ fiveMinute('the pane is three lines of status, with the breaks and keep-warm pic
   const expired = await pane($, 'terminal')
   expect((await expired.findAll({ type: 'Button' })).map(b => b.props.label)).toEqual(['Keep warm: off', 'Compact'])
   expect(await textsOf(expired)).toContain('expired')
+})
+
+slow('the pane takes at most five lines at every width a terminal of 80 columns or more gives it, in every state', async ($, on) => {
+  const { clock, request } = await boot($, on)
+  const keepWarmOff = () => $.command.run({ command: 'cache', args: 'keep off' } as never)
+  await expectFiveLines($, 'no cache')
+  await keepWarmOn($)
+  await expectFiveLines($, 'no cache, keep warm on')
+
+  // Two breaks in a row: the latest on its own line with the count of the earlier one.
+  for (const use of THREE) await request(use)
+  await request({ read: 0, written: 63_000, uncached: 20, output: 100 })
+  await request({ read: 0, written: 63_000, uncached: 20, output: 100 })
+  await expectFiveLines($, 'warm, keep warm on, two breaks')
+  await keepWarmOff()
+  await expectFiveLines($, 'warm, keep warm off, two breaks')
+
+  // The entry's length is still assumed here, and "Expiring soon" is the longest state word.
+  await clock.advance(53 * MINUTE)
+  await expectFiveLines($, 'expiring soon, keep warm off')
+  await keepWarmOn($)
+  await expectFiveLines($, 'expiring soon, keep warm on')
+
+  await keepWarmOff()
+  await clock.advance(8 * MINUTE)
+  await expectFiveLines($, 'expired, keep warm off')
+  await keepWarmOn($)
+  await expectFiveLines($, 'expired, keep warm on')
+})
+
+idleCap('the pane keeps to five lines with pings counted and keep warm paused for idleness', async ($, on) => {
+  const { clock, fork, request } = await boot($, on)
+  await keepWarmOn($)
+  for (const use of THREE) await request(use)
+  await request({ read: 0, written: 63_000, uncached: 20, output: 100 })
+  await clock.advance(66 * MINUTE)
+  expect(fork.calls).toBeGreaterThan(5)
+  const ui = await pane($, 'terminal', 80)
+  const text = await textsOf(ui)
+  expect(text).toContain('Paused: ')
+  expect(text).toContain('pings so far')
+  await ui.unmount()
+  await expectFiveLines($, 'pings counted and paused')
 })
