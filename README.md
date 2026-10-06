@@ -46,9 +46,9 @@ Press Details, or run `/cache`, for the pane. In a terminal it takes at most fiv
 
 The first line is the status: the countdown, how long your cache lives, and its state (Warm or Expiring soon; once the cache has run out the countdown reads expired). The buttons sit on the same line: Warm now while the cache is live, the Keep warm toggle, and Compact. Where that line is too narrow, the cache length shortens to 1h or 5m and then goes, and then the state word. In a wide terminal Claude Code docks the pane at the side, where it is narrower than the terminal: the buttons then take a line of their own under the status, and in the narrowest pane they share two lines with it. The second line holds the session's numbers: hit rate, requests, tokens read, written and uncached, and, for models with a known price, the dollars saved and spent on writes. On a narrow window the numbers drop from the end rather than wrapping. The third line is the history, one bar for each of the last requests with the newest on the right, and a legend for read, written, uncached and break. When the status and buttons take two lines and both a latest break and the keep-warm line are showing, the history is left out so the pane stays within five lines.
 
-When the cache has broken, one more line gives the latest break: when it happened, how much was re-written, roughly what that cost and why, with a count of earlier breaks. It is absent while there are none.
+When the cache has broken, one more line gives the latest break: when it happened, how much was re-written, roughly what that cost and why, with a count of earlier breaks. Where the pane is narrow the line drops the cause, then the count of earlier breaks, then the cost. It is absent while there are none.
 
-While Keep warm is on, the pane adds a last line with two pickers, how long before expiry to ping and when to stop after you have been idle, next to a count of the pings so far and what they cost. If keep warm has stopped because you were idle, it says so there. The line never wraps: where the room is short the pickers use shorter wording and the pings drop their details from the end.
+While Keep warm is on, the pane adds a last line with two pickers, how long before expiry to ping and when to stop after you have been idle, next to a count of the pings so far and what they cost. If keep warm has stopped because you were idle, it says so there. The line never wraps: where the room is short the pickers use shorter wording and the ping details drop from the end, the count last, so in a narrow pane only the two pickers may show.
 
 ![The Details pane with Keep warm on: the same status, numbers and history lines, then a line with the pickers "Ping: automatically before expiry" and "Stop: after 3 hours idle", and "No pings yet."](assets/pane-terminal-keep-warm.png)
 
@@ -84,7 +84,7 @@ Cache Maxxer has three settings, each a choice from a short list. In a terminal,
 }
 ```
 
-`ttl` is how long the cache lives: `auto` (the default) reads it from the newest cache write in your session transcript after each turn, or from the length Claude Code reports when you switch model, and assumes an hour, shown as "1h?", until it knows. `1h` and `5m` fix it.
+`ttl` is how long the cache lives: `auto` (the default) reads it from the newest cache write in your session transcript, checked after a turn (at most every 15 seconds until it has seen one, then at most every 10 minutes), or from the length Claude Code reports when you switch model, and assumes an hour, shown as "1h?", until it knows. `1h` and `5m` fix it.
 
 `lead` is how long before expiry the notice and the ping come: `auto` is 4 minutes for an hour cache and 40 seconds for five minutes, or pick 1, 2, 4 or 8 minutes (never more than half the cache's life).
 
@@ -108,7 +108,7 @@ Update with `claude plugin marketplace update vayaan-labs` and then `claude plug
 
 **No band.** The band appears once your conversation has a cache, which is after the first reply, and only when the plugin is enabled (`claude plugin list` shows it). If Claude Code was open when you installed, run `/reload-plugins`. If it still does not appear, update Claude Code, since this plugin is tested on 2.1.289 only.
 
-**The countdown shows "1h?".** Cache Maxxer has not yet seen how long your cache lives and is assuming an hour. It reads this from your session after each turn, or you can set `ttl` yourself.
+**The countdown shows "1h?".** Cache Maxxer has not yet seen how long your cache lives and is assuming an hour. It looks in your session after a turn, at most every 15 seconds until it finds a cache write, or you can set `ttl` yourself.
 
 **No dollar figures.** Prices are built in for Opus 5.5, Sonnet 5.5 and Haiku 4.5 only. With any other model you get token counts and no dollar amounts.
 
