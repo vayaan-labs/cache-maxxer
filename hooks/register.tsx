@@ -1,8 +1,10 @@
 import { atom, read, update } from 'claude-code'
 import type { ElementTable, EngineInterface, PluginOptions, Register, Timer, TurnUsage } from 'claude-code'
 
+import type { CacheSettings } from '../types'
+
 import { desktopBand, terminalBand, type Actions } from './band'
-import { fmtTokens, fmtUsd } from './format'
+import { fmtApprox, fmtTokens } from './format'
 import { applyRequest, DEFAULT_SETTINGS, EMPTY_CACHE, EMPTY_PINGS, EMPTY_TOTALS, type Pending } from './model'
 import { desktopPane, terminalPane, type PaneActions } from './pane'
 import { requestCostUsd } from './pricing'
@@ -13,6 +15,7 @@ import { makeView, summaryText, type View } from './view'
 // why it broke, and (when asked) keeps it warm with a short request before it lapses.
 
 const PANE_ID = 'cache-maxxer'
+const COMMAND = 'cache-maxxer'
 const PANE = { id: PANE_ID, title: 'Cache Maxxer', focus: true, closeOnEscape: true } as const
 
 // Asks for one word so the reply costs next to nothing; the request is there to read the cache.
@@ -32,6 +35,7 @@ const settingsAtom = atom({ plugin: 'cache-maxxer', key: 'settings' } as const, 
 const pingsAtom = atom({ plugin: 'cache-maxxer', key: 'pings' } as const, EMPTY_PINGS)
 const activityAtom = atom({ plugin: 'cache-maxxer', key: 'activity' } as const, 0)
 const pausedAtom = atom({ plugin: 'cache-maxxer', key: 'paused' } as const, '')
+const pickerAtom = atom({ plugin: 'cache-maxxer', key: 'picker' } as const, '')
 const tickAtom = atom({ plugin: 'cache-maxxer', key: 'tick' } as const, 0)
 
 type Cfg = { ttl: string; lead: string; idleCap: string }
@@ -74,6 +78,7 @@ async function viewOf($: EngineInterface, cfg: Cfg): Promise<View> {
     settings: await read($, settingsAtom),
     pings: await read($, pingsAtom),
     paused: await read($, pausedAtom),
+    picker: await read($, pickerAtom),
   })
 }
 
@@ -100,11 +105,15 @@ async function noteRequest($: EngineInterface, cfg: Cfg, startedAt: number, usag
   await update($, historyAtom, () => next.history)
   await update($, totalsAtom, () => next.totals)
   await update($, breaksAtom, () => next.breaks)
+  // A request that wrote may have put its split in the transcript: look again at the next tick.
+  if (usage.cache_creation_input_tokens > 0) rt.lookup.at = 0
   startTicker($, cfg)
   if (brk) $.ui.toast(`Cache rebuilt · ${fmtTokens(brk.written)} tokens re-written · ${brk.cause}`)
 }
 
-// Reads how long an entry lives from the newest cache write in the session transcript.
+// Reads how long an entry lives from the newest cache write in the session transcript. The transcript
+// may not hold the write yet when a turn ends, so the ticker asks again (at most every RETRY_MS)
+// until it has been seen.
 async function learnTtl($: EngineInterface, cfg: Cfg) {
   if (cfg.ttl !== 'auto') return
   const now = await $.clock.now()
@@ -147,6 +156,7 @@ function stopTicker() {
 async function tick($: EngineInterface, cfg: Cfg) {
   const cache = await read($, cacheAtom)
   if (cache.startedAt === 0) return stopTicker()
+  if (cfg.ttl === 'auto' && cache.ttlMs === null) void learnTtl($, cfg)
   const now = await $.clock.now()
   const ttl = ttlInfo(cfg.ttl, cache.ttlMs).ms
   const left = cache.startedAt + ttl - now
@@ -231,32 +241,34 @@ async function ping($: EngineInterface, cfg: Cfg): Promise<PingResult> {
   }
 }
 
+// What the person is told about a ping, in plain words: a background request went out, what it read
+// from the cache, and that the cache's timer started again. A rebuild is named as one.
 const pingText = (r: PingResult) => {
   if (!r.ok) return `Could not warm the cache: ${r.reason}`
-  const cost = r.costUsd === null ? '' : ` · ~${fmtUsd(r.costUsd)}`
+  const cost = r.costUsd === null ? '' : ` · ${fmtApprox(r.costUsd)}`
   return r.hasLapsed
-    ? `The cache had already lapsed; the ping rebuilt it · ${fmtTokens(r.written)} tokens written${cost}`
-    : `Cache warmed · ${fmtTokens(r.read)} tokens read${cost}`
+    ? `The cache had already expired, so the background request rebuilt it · ${fmtTokens(r.written)} tokens written, timer restarted${cost}`
+    : `Cache kept warm · a background request read ${fmtTokens(r.read)} tokens from it, so the timer restarted${cost}`
 }
 
 async function warmNow($: EngineInterface, cfg: Cfg) {
   $.ui.toast(pingText(await ping($, cfg)))
 }
 
-async function setKeepWarm($: EngineInterface, cfg: Cfg, isOn: boolean) {
-  await update($, settingsAtom, s => ({ ...s, keepWarm: isOn }))
-  await $.store.set('keepWarm', isOn)
+// The one place Keep warm changes, whichever button or command asks. A toggle flips the setting
+// where it stands now, so it never works from a stale reading; the pickers close with it.
+async function setKeepWarm($: EngineInterface, cfg: Cfg, change: boolean | 'toggle') {
+  const next = await update($, settingsAtom, s => ({ ...s, keepWarm: change === 'toggle' ? !s.keepWarm : change }))
+  await $.store.set('keepWarm', next.keepWarm)
   await update($, pausedAtom, () => '')
+  await update($, pickerAtom, () => '')
   rt.skippedFor = 0
-  if (isOn) {
+  if (next.keepWarm) {
     const now = await $.clock.now()
     await update($, activityAtom, () => now)
     startTicker($, cfg)
   }
-}
-
-async function toggleKeepWarm($: EngineInterface, cfg: Cfg) {
-  await setKeepWarm($, cfg, !(await read($, settingsAtom)).keepWarm)
+  return next.keepWarm
 }
 
 async function compact($: EngineInterface) {
@@ -285,6 +297,7 @@ async function resetConversation($: EngineInterface) {
   await update($, breaksAtom, () => [])
   await update($, pingsAtom, () => EMPTY_PINGS)
   await update($, pausedAtom, () => '')
+  await update($, pickerAtom, () => '')
   await update($, tickAtom, () => 0)
 }
 
@@ -292,7 +305,7 @@ async function resetConversation($: EngineInterface) {
 
 function bandActions($: EngineInterface, cfg: Cfg): Actions {
   return {
-    toggleKeepWarm: () => void toggleKeepWarm($, cfg),
+    toggleKeepWarm: () => void setKeepWarm($, cfg, 'toggle'),
     warmNow: () => void warmNow($, cfg),
     compact: () => void compact($),
     details: () => void $.ui.open(PANE),
@@ -300,13 +313,19 @@ function bandActions($: EngineInterface, cfg: Cfg): Actions {
 }
 
 function paneActions($: EngineInterface, cfg: Cfg): PaneActions {
+  // Choosing an option sets it and closes the list.
+  const choose = async (set: (s: CacheSettings) => CacheSettings) => {
+    await update($, settingsAtom, set)
+    await update($, pickerAtom, () => '')
+  }
   return {
-    toggleKeepWarm: () => void toggleKeepWarm($, cfg),
+    toggleKeepWarm: () => void setKeepWarm($, cfg, 'toggle'),
     warmNow: () => void warmNow($, cfg),
     compact: () => void compact($),
     close: () => void $.ui.close({ id: PANE_ID }),
-    setLead: value => void update($, settingsAtom, s => ({ ...s, lead: value })),
-    setIdleCap: value => void update($, settingsAtom, s => ({ ...s, idleCap: value })),
+    togglePicker: which => void update($, pickerAtom, open => (open === which ? '' : which)),
+    setLead: value => void choose(s => ({ ...s, lead: value })),
+    setIdleCap: value => void choose(s => ({ ...s, idleCap: value })),
   }
 }
 
@@ -323,7 +342,7 @@ async function runCommand($: EngineInterface, cfg: Cfg, args: string): Promise<{
     await setKeepWarm($, cfg, value === 'on')
     return { text: `Keep warm is ${value}.` }
   }
-  return { text: 'Usage: /cache, /cache warm, /cache keep on|off' }
+  return { text: `Usage: /${COMMAND}, /${COMMAND} warm, /${COMMAND} keep on|off` }
 }
 
 export const register: Register = (on, options) => {
@@ -337,7 +356,7 @@ export const register: Register = (on, options) => {
     void learnTtl($, cfg)
     try {
       await $.command.register({
-        name: 'cache',
+        name: COMMAND,
         description: 'Show the prompt cache, or keep it warm',
         argumentHint: '[warm | keep on|off]',
         immediate: true,
@@ -433,5 +452,5 @@ export const register: Register = (on, options) => {
     return terminalPane(el as ElementTable<'terminal'>, v, e.props.bodyColumns, actions)
   })
 
-  on('command.run', { command: 'cache' }, async ($, e) => runCommand($, cfg, e.args))
+  on('command.run', { command: COMMAND }, async ($, e) => runCommand($, cfg, e.args))
 }

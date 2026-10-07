@@ -1,6 +1,6 @@
 import type { ElementTable } from 'claude-code'
 
-import { buildSegments, planLines, runsText, type Run, type Seg } from './layout'
+import { buildSegments, flowRows, MAX_BAND_LINES, planLines, runsText, type Run, type Seg } from './layout'
 import type { Tone, View } from './view'
 
 // Mid tones, so they read on light and dark alike.
@@ -24,12 +24,19 @@ export type Actions = {
   details: () => void
 }
 
-type ButtonSpec = { key: string; label: string; isPrimary: boolean; press: () => void }
+export type ButtonSpec = { key: string; label: string; isPrimary: boolean; press: () => void }
+
+// The one Keep warm button, drawn by the band and the pane alike: its label and its look follow the
+// setting, and a press goes to the one toggle.
+export const keepWarmButton = (v: View, press: () => void): ButtonSpec => ({
+  key: 'keep',
+  label: `Keep warm: ${v.settings.keepWarm ? 'on' : 'off'}`,
+  isPrimary: v.settings.keepWarm,
+  press,
+})
 
 function buttonSpecs(v: View, a: Actions): ButtonSpec[] {
-  const specs: ButtonSpec[] = [
-    { key: 'keep', label: `Keep warm: ${v.settings.keepWarm ? 'on' : 'off'}`, isPrimary: v.settings.keepWarm, press: a.toggleKeepWarm },
-  ]
+  const specs: ButtonSpec[] = [keepWarmButton(v, a.toggleKeepWarm)]
   if (v.cache.startedAt > 0 && !v.isExpired) specs.push({ key: 'warm', label: 'Warm now', isPrimary: false, press: a.warmNow })
   if (v.isExpired) specs.push({ key: 'compact', label: 'Compact', isPrimary: false, press: a.compact })
   specs.push({ key: 'details', label: 'Details', isPrimary: false, press: a.details })
@@ -69,28 +76,39 @@ const terminalWidth = (s: Seg) => runsText(terminalRuns(s)).length
 
 const SEPARATOR: Run = { text: ' │ ', tone: 'muted' }
 
+// A terminal button draws as "[ label ]".
+const terminalButtonWidth = (b: ButtonSpec) => b.label.length + 4
+
 export function terminalBand(el: ElementTable<'terminal'>, v: View, columns: number, a: Actions, rest: JSX.Element) {
   const { Box, Text, Button } = el
-  const [line = []] = planLines(buildSegments(v), terminalWidth, SEPARATOR.text.length, columns, false)
-  const runs: Run[] = []
-  line.forEach((s, i) => {
-    if (i > 0 && line[i - 1]!.group !== s.group) runs.push(SEPARATOR)
-    runs.push(...terminalRuns(s))
-  })
+  const lines = planLines(buildSegments(v), terminalWidth, SEPARATOR.text.length, columns, MAX_BAND_LINES)
+  // Whole buttons, onto another line where they do not all fit beside each other.
+  const buttonRows = flowRows(buttonSpecs(v, a), terminalButtonWidth, 1, columns)
   return (
     <Box flexDirection="column">
-      <Box flexDirection="row">
-        {runs.map((r, i) => (
-          <Text key={`r${i}`} {...colorProps(r.tone)} {...(r.bold ? { bold: true } : {})}>
-            {r.text}
-          </Text>
-        ))}
-      </Box>
-      <Box flexDirection="row" columnGap={1}>
-        {buttonSpecs(v, a).map(b => (
-          <Button key={b.key} label={b.label} onPress={b.press} {...(b.isPrimary ? { variant: 'primary' as const } : {})} />
-        ))}
-      </Box>
+      {lines.map((line, row) => {
+        const runs: Run[] = []
+        line.forEach((s, i) => {
+          if (i > 0 && line[i - 1]!.group !== s.group) runs.push(SEPARATOR)
+          runs.push(...terminalRuns(s))
+        })
+        return (
+          <Box key={`line${row}`} flexDirection="row">
+            {runs.map((r, i) => (
+              <Text key={`r${i}`} {...colorProps(r.tone)} {...(r.bold ? { bold: true } : {})}>
+                {r.text}
+              </Text>
+            ))}
+          </Box>
+        )
+      })}
+      {buttonRows.map((row, i) => (
+        <Box key={`buttons${i}`} flexDirection="row" columnGap={1}>
+          {row.map(b => (
+            <Button key={b.key} label={b.label} onPress={b.press} {...(b.isPrimary ? { variant: 'primary' as const } : {})} />
+          ))}
+        </Box>
+      ))}
       {rest}
     </Box>
   )
@@ -215,8 +233,8 @@ export function svgBand(lines: readonly (readonly Seg[])[]): { source: string; w
   return { source, width, height, alt: alt.join(' / ') }
 }
 
-// The SVG for the room it has, in pixels: one line, or two when one cannot hold the band.
-const desktopSvg = (v: View, room: number) => svgBand(planLines(buildSegments(v), segPx, SEP_PX, room, true))
+// The SVG for the room it has, in pixels: as many lines as the band needs.
+const desktopSvg = (v: View, room: number) => svgBand(planLines(buildSegments(v), segPx, SEP_PX, room, MAX_BAND_LINES))
 
 export function desktopBand(el: ElementTable<'desktop'>, v: View, columns: number, a: Actions, rest: JSX.Element) {
   const { Box, Svg, Button } = el

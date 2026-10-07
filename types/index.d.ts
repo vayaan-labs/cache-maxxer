@@ -69,6 +69,8 @@ declare module 'claude-code' {
       activity: number
       // The idle cap's label once keep warm has stopped for lack of activity, else empty
       paused: string
+      // Which keep-warm picker is open in the Details pane ('lead' or 'cap'), else empty
+      picker: string
       // The second the countdown last moved, written each second so the band redraws
       tick: number
     }

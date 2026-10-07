@@ -1,8 +1,9 @@
 import type { ElementTable } from 'claude-code'
 
 import type { Req } from '../types'
-import { COLORS, colorProps, textPx } from './band'
-import { fmtClock, fmtLocalTime, fmtTokens, fmtUsd } from './format'
+import { COLORS, colorProps, keepWarmButton, textPx, type ButtonSpec } from './band'
+import { fmtApprox, fmtClock, fmtLocalTime, fmtTokens } from './format'
+import { flowRows, wrapWords } from './layout'
 import { HISTORY_LIMIT } from './model'
 import { pingsItems, stateTone, stateWord, sessionHitRate, ttlLabel, ttlShort, type Tone, type View } from './view'
 
@@ -11,11 +12,14 @@ export type PaneActions = {
   warmNow: () => void
   compact: () => void
   close: () => void
+  // Opens a keep-warm picker's list, or closes it if that one is open
+  togglePicker: (which: 'lead' | 'cap') => void
   setLead: (value: string) => void
   setIdleCap: (value: string) => void
 }
 
-// The picker draws "label: option", so the two read as one phrase: "Ping: 4 minutes before expiry".
+// A closed picker draws as a button reading "label: option ▾", so it reads as something to press. Its
+// list is a row of buttons, one per option: a click or Enter on one chooses it.
 type Option = { value: string; label: string }
 type Pickers = { lead: readonly Option[]; cap: readonly Option[] }
 
@@ -52,6 +56,29 @@ const SHORT_PICKERS: Pickers = {
   ],
 }
 
+// What an open list shows: what it asks, and its options in the words of a list.
+const OPEN_LISTS: Record<'lead' | 'cap', { ask: string; options: readonly Option[] }> = {
+  lead: {
+    ask: 'Ping before expiry:',
+    options: [
+      { value: 'auto', label: 'automatic' },
+      { value: '1m', label: '1 minute' },
+      { value: '2m', label: '2 minutes' },
+      { value: '4m', label: '4 minutes' },
+      { value: '8m', label: '8 minutes' },
+    ],
+  },
+  cap: {
+    ask: 'Stop when idle for:',
+    options: [
+      { value: '1h', label: '1 hour' },
+      { value: '3h', label: '3 hours' },
+      { value: '8h', label: '8 hours' },
+      { value: 'none', label: 'never stop' },
+    ],
+  },
+}
+
 type Run = { text: string; tone: Tone; bold?: boolean }
 
 const muted = (text: string): Run => ({ text, tone: 'muted' })
@@ -76,7 +103,7 @@ function joined(pieces: readonly (readonly Run[])[]): Run[] {
   return pieces.filter(p => p.length > 0).flatMap((p, i) => (i === 0 ? [...p] : [SEP, ...p]))
 }
 
-// ---- The numbers, dropped from the end where the room is short ----
+// ---- The numbers, flowing onto more rows where the room is short ----
 
 function numberItems(v: View): Run[][] {
   const t = v.totals
@@ -87,52 +114,39 @@ function numberItems(v: View): Run[][] {
     [fig(fmtTokens(t.written)), muted(' written')],
     [fig(fmtTokens(t.uncached)), muted(' uncached')],
   ]
-  if (t.isPriced) items.push([muted('saved '), fig(`~${fmtUsd(t.savingsUsd)}`)], [muted('writes '), fig(`~${fmtUsd(t.writeCostUsd)}`)])
+  if (t.isPriced) items.push([muted('saved '), fig(fmtApprox(t.savingsUsd))], [muted('writes '), fig(fmtApprox(t.writeCostUsd))])
   return items
 }
 
-function numbersRuns(v: View, room: number): Run[] {
-  if (v.totals.requests === 0) return [muted('No requests yet')]
-  const items = numberItems(v)
-  while (items.length > 1 && runsLength(joined(items)) > room) items.pop()
-  return joined(items)
+// Every number stays: they fill a row and the rest start the next one, never splitting a number.
+function numbersRows(v: View, room: number): Run[][] {
+  if (v.totals.requests === 0) return [[muted('No requests yet')]]
+  return flowRows(numberItems(v), runsLength, SEP.text.length, room).map(joined)
 }
 
 // ---- The latest break ----
 
-// The latest break on one line. As the room shrinks it drops pieces: the end of the cause (an ellipsis
-// marks the cut), the count of earlier breaks, the cause, then the cost and the wording; the time and
-// the size of the write stay.
-function breakRuns(v: View, room: number): Run[] | null {
+// The latest break: when, how much was re-written, what it cost, why, and how many came before. The
+// pieces fill a row and the rest start the next one; a cause too long for a row is cut at its spaces.
+function breakRows(v: View, room: number): Run[][] | null {
   const latest = v.breaks[v.breaks.length - 1]
   if (!latest) return null
   const more = v.breaks.length - 1
-  const row = (heading: string, unit: string, isCostShown: boolean, cause: Run[], tail: Run[]): Run[] => [
-    { text: '▲ ', tone: 'danger' },
-    ...(heading === '' ? [] : [muted(`${heading} `)]),
-    ...joined([
-      [fig(fmtLocalTime(latest.at))],
-      [fig(fmtTokens(latest.written)), ...(unit === '' ? [] : [muted(unit)])],
-      ...(isCostShown && latest.costUsd !== null ? [[fig(`~${fmtUsd(latest.costUsd)}`)]] : []),
-      cause,
-    ]),
-    ...tail,
+  type Piece = { runs: Run[]; words?: string }
+  const pieces: Piece[] = [
+    { runs: [{ text: '▲ ', tone: 'danger' }, muted('Last break '), fig(fmtLocalTime(latest.at))] },
+    { runs: [fig(fmtTokens(latest.written)), muted(' re-written')] },
+    ...(latest.costUsd !== null ? [{ runs: [fig(fmtApprox(latest.costUsd))] }] : []),
+    { runs: [muted(latest.cause)], words: latest.cause },
+    ...(more > 0 ? [{ runs: [muted(`and ${more} more`)] }] : []),
   ]
-  const tail = more > 0 ? [muted(` · and ${more} more`)] : []
-  const full = row('Last break', ' re-written', true, [muted(latest.cause)], tail)
-  if (runsLength(full) <= room) return full
-  for (const kept of [tail, []]) {
-    const spare = room - runsLength(row('Last break', ' re-written', true, [], kept)) - SEP.text.length
-    if (spare >= 12) return row('Last break', ' re-written', true, [muted(`${latest.cause.slice(0, spare - 1)}…`)], kept)
-  }
-  const shapes: [string, string, boolean][] = [
-    ['Last break', ' re-written', true],
-    ['Last break', ' re-written', false],
-    ['Break', ' re-written', false],
-    ['', '', false],
-  ]
-  const forms = shapes.flatMap(([heading, unit, isCostShown]) => [tail, []].map(kept => row(heading, unit, isCostShown, [], kept)))
-  return forms.find(f => runsLength(f) <= room) ?? forms[forms.length - 1]!
+  return flowRows(pieces, p => runsLength(p.runs), SEP.text.length, room).flatMap(row => {
+    const only = row[0]!
+    if (row.length === 1 && only.words !== undefined && runsLength(only.runs) > room) {
+      return wrapWords(only.words, room).map(line => [muted(line)])
+    }
+    return [joined(row.map(p => p.runs))]
+  })
 }
 
 // ---- The history of the last requests, newest on the right ----
@@ -153,11 +167,12 @@ const LEGEND_WIDTH = '   ■ read  ■ written  ■ uncached  ▲ break'.length
 const MIN_CELLS = 8
 
 // One cell per request: as tall as the request is big next to the others, in the colour of its largest part.
-function terminalHistoryRuns(history: readonly Req[], room: number): Run[] {
+// The legend follows the bars on their row where there is room, else on a row or two of its own.
+function terminalHistoryRows(history: readonly Req[], room: number): Run[][] {
   const label = (n: number) => ` last ${n}`
   let cells = Math.min(history.length, HISTORY_LIMIT, room - label(HISTORY_LIMIT).length - LEGEND_WIDTH)
-  const hasLegend = cells >= Math.min(MIN_CELLS, history.length)
-  if (!hasLegend) cells = Math.min(history.length, HISTORY_LIMIT, room - label(HISTORY_LIMIT).length)
+  const hasInlineLegend = cells >= Math.min(MIN_CELLS, history.length)
+  if (!hasInlineLegend) cells = Math.min(history.length, HISTORY_LIMIT, room - label(HISTORY_LIMIT).length)
   const shown = history.slice(-Math.max(1, cells))
   const max = Math.max(1, ...shown.map(tokensOf))
   const bars: Run[] = shown.map(r => {
@@ -168,18 +183,15 @@ function terminalHistoryRuns(history: readonly Req[], room: number): Run[] {
     return { text: EIGHTHS[level]!, tone: PART_TONES[part]! }
   })
   const runs = [...mergeRuns(bars), muted(label(shown.length))]
-  if (!hasLegend) return runs
-  return [
-    ...runs,
-    muted('   '),
-    { text: '■ ', tone: 'warm' },
-    muted('read  '),
-    { text: '■ ', tone: 'warn' },
-    muted('written  '),
-    muted('■ uncached  '),
-    { text: '▲ ', tone: 'danger' },
-    muted('break'),
+  const legend: Run[][] = [
+    [{ text: '■ ', tone: 'warm' }, muted('read')],
+    [{ text: '■ ', tone: 'warn' }, muted('written')],
+    [muted('■ uncached')],
+    [{ text: '▲ ', tone: 'danger' }, muted('break')],
   ]
+  if (hasInlineLegend) return [[...runs, muted('   '), ...legend.flatMap((item, i) => (i === 0 ? item : [muted('  '), ...item]))]]
+  const legendRows = flowRows(legend, runsLength, 2, room).map(row => row.flatMap((item, i) => (i === 0 ? item : [muted('  '), ...item])))
+  return [runs, ...legendRows]
 }
 
 const BAR = 5
@@ -303,17 +315,16 @@ function desktopHeader(el: ElementTable<'desktop'>, v: View, level: HeaderLevel)
 // The common part of both surfaces' element tables; the lines below use nothing else.
 type Common = ElementTable<'terminal'>
 
-// What differs between the surfaces: the first piece of line 1, the history line, and how wide a control draws.
+// What differs between the surfaces: the first piece of the status row, the history rows, and how wide a control draws.
 type Surface = {
   // The columns the pane's frame and padding take of the width it is given
   inset: number
-  // The first piece of line 1 at each level of detail, with the columns it takes
+  // The first piece of the status row at each level of detail, with the columns it takes
   header: (level: HeaderLevel) => { node: JSX.Element; width: number }
-  history: (room: number) => JSX.Element
+  history: (room: number) => JSX.Element[]
   // Null where the surface's own frame already draws a close control (the terminal's pane border does)
   closeLabel: string | null
   buttonWidth: (label: string) => number
-  pickerChrome: number
 }
 
 function runsRow(el: Common, runs: readonly Run[], key: string) {
@@ -329,58 +340,26 @@ function runsRow(el: Common, runs: readonly Run[], key: string) {
   )
 }
 
-// ---- The keep-warm row: both pickers and the pings, always on one row ----
+// ---- Buttons and text that share rows, flowing onto the next row where the room runs out ----
 
-function pingsCandidates(v: View): Run[][] {
-  const items = pingsItems(v.pings).map(text => [muted(text)])
-  const paused = (text: string) => (v.paused === '' ? [] : [[muted(text)]])
-  const long = paused(`Paused: you have been idle for ${v.paused}.`)
-  const short = paused(`Paused: idle for ${v.paused}.`)
-  const fewer = items.slice(1).map((_, i) => joined([...items.slice(0, items.length - 1 - i), ...short]))
-  return [joined([...items, ...long]), joined([...items, ...short]), ...fewer, joined(short), []]
+type PaneButton = ButtonSpec & { isDismiss?: boolean }
+
+// One thing on a row: a button, or text that starts with a lead (two spaces, or a dot) that goes when
+// the text starts a row.
+type Cell = { key: string; width: number; button?: PaneButton; runs?: Run[]; lead?: string }
+
+const buttonCell = (b: PaneButton, s: Surface): Cell => ({ key: b.key, width: s.buttonWidth(b.label), button: b })
+const textCell = (key: string, runs: Run[], lead: string): Cell => ({ key, width: runsLength(runs) + lead.length, runs, lead })
+
+// Text as cells: one where it fits a row, else its lines cut at spaces, each taking a row of its own.
+function textCells(key: string, text: string, tone: Tone, lead: string, room: number): Cell[] {
+  if (text.length + lead.length <= room) return [textCell(key, [{ text, tone }], lead)]
+  return wrapWords(text, room).map((line, i) => ({ key: `${key}-${i}`, width: room, runs: [{ text: line, tone }], lead: '' }))
 }
 
-function keepWarmRow(el: Common, v: View, a: PaneActions, room: number, s: Surface) {
-  const { Box, Select } = el
-  const widthOf = (p: Pickers) => {
-    const lead = p.lead.find(o => o.value === v.settings.lead)?.label ?? ''
-    const cap = p.cap.find(o => o.value === v.settings.idleCap)?.label ?? ''
-    return 'Ping'.length + lead.length + 'Stop'.length + cap.length + 2 * s.pickerChrome + 3
-  }
-  const candidates = pingsCandidates(v)
-  const spareFor = (p: Pickers) => room - widthOf(p) - 3
-  // The full wording when the pings still fit beside it, else the short wording with as much of the pings as fits.
-  const fullFits = candidates.slice(0, 2).find(c => runsLength(c) <= spareFor(FULL_PICKERS))
-  const [pickers, pings] = fullFits
-    ? [FULL_PICKERS, fullFits]
-    : [SHORT_PICKERS, candidates.find(c => runsLength(c) <= spareFor(SHORT_PICKERS)) ?? []]
+function buttonEl(el: Common, b: PaneButton) {
+  const { Button } = el
   return (
-    <Box key="keepwarm" flexDirection="row" columnGap={3}>
-      <Box key="pickers" flexDirection="row" columnGap={3}>
-        <Select key="lead" label="Ping" options={pickers.lead} value={v.settings.lead} onSelect={a.setLead} />
-        <Select key="cap" label="Stop" options={pickers.cap} value={v.settings.idleCap} onSelect={a.setIdleCap} />
-      </Box>
-      {pings.length > 0 ? runsRow(el, pings, 'pings') : null}
-    </Box>
-  )
-}
-
-// What the pane promises: at most this many lines, in every state, from a pane 38 columns wide up.
-const MAX_LINES = 5
-
-function body(el: Common, v: View, a: PaneActions, columns: number, s: Surface) {
-  const { Box, Button } = el
-  const room = Math.max(20, columns - s.inset)
-  const hasCache = v.cache.startedAt > 0
-  const keepWarm = v.settings.keepWarm
-
-  const specs = [
-    ...(hasCache && !v.isExpired ? [{ key: 'warm', label: 'Warm now', press: a.warmNow, isPrimary: false, isDismiss: false }] : []),
-    { key: 'keep', label: `Keep warm: ${keepWarm ? 'on' : 'off'}`, press: a.toggleKeepWarm, isPrimary: keepWarm, isDismiss: false },
-    { key: 'compact', label: 'Compact', press: a.compact, isPrimary: false, isDismiss: false },
-    ...(s.closeLabel === null ? [] : [{ key: 'close', label: s.closeLabel, press: a.close, isPrimary: false, isDismiss: true }]),
-  ]
-  const buttons = specs.map(b => (
     <Button
       key={b.key}
       label={b.label}
@@ -388,49 +367,130 @@ function body(el: Common, v: View, a: PaneActions, columns: number, s: Surface) 
       {...(b.isPrimary ? { variant: 'primary' as const } : {})}
       {...(b.isDismiss ? { role: 'dismiss' as const } : {})}
     />
-  ))
-  const widths = specs.map(b => s.buttonWidth(b.label))
-  // The columns the actions from `from` up to `to` take side by side
-  const span = (from: number, to: number) => widths.slice(from, to).reduce((n, w) => n + w, 0) + Math.max(0, to - from - 1)
-  const actionsRow = (key: string, from: number, to: number) => (
-    <Box key={key} flexDirection="row" columnGap={1} alignItems="center">
-      {buttons.slice(from, to)}
-    </Box>
   )
-  const statusRow = (header: JSX.Element, to: number) => (
-    <Box key="top" flexDirection="row" justifyContent="space-between" alignItems="center">
-      {header}
-      {actionsRow('actions', 0, to)}
-    </Box>
-  )
-  const count = specs.length
+}
 
-  // The status and every action on one line where the room allows, the status trimmed as far as it
-  // takes. Otherwise two lines: the status alone above the actions, or, where the actions are too
-  // wide for a line of their own, the status beside the first of them and the rest below.
+// Text cells that sit side by side draw as one piece of text, joined by their leads.
+function cellRows(el: Common, cells: readonly Cell[], room: number, keyPrefix: string): JSX.Element[] {
+  const { Box } = el
+  return flowRows(cells, c => c.width, 1, room).map((row, r) => {
+    const parts: JSX.Element[] = []
+    let text: { key: string; runs: Run[] } | null = null
+    const flush = () => {
+      if (text) parts.push(runsRow(el, text.runs, text.key))
+      text = null
+    }
+    row.forEach((c, i) => {
+      if (c.button) {
+        flush()
+        parts.push(buttonEl(el, c.button))
+      } else if (text) {
+        text.runs.push(muted(` ${c.lead!}`), ...c.runs!)
+      } else {
+        text = { key: c.key, runs: i === 0 ? [...c.runs!] : [muted(c.lead!), ...c.runs!] }
+      }
+    })
+    flush()
+    return (
+      <Box key={`${keyPrefix}${r}`} flexDirection="row" columnGap={1} alignItems="center">
+        {parts}
+      </Box>
+    )
+  })
+}
+
+// ---- The keep-warm rows: the two pickers and the pings, or one picker's open list ----
+
+const PICKER_NAMES = { lead: 'Ping', cap: 'Stop' } as const
+const PICKER_HINT = 'click or Enter to change'
+
+function closedCells(v: View, a: PaneActions, s: Surface, p: Pickers, room: number): Cell[] {
+  const picker = (which: 'lead' | 'cap'): Cell => {
+    const current = which === 'lead' ? v.settings.lead : v.settings.idleCap
+    const label = p[which].find(o => o.value === current)?.label ?? ''
+    return buttonCell({ key: which, label: `${PICKER_NAMES[which]}: ${label} ▾`, isPrimary: false, press: () => a.togglePicker(which) }, s)
+  }
+  const isFull = p === FULL_PICKERS
+  const items = pingsItems(v.pings)
+  if (v.paused !== '') items.push(isFull ? `Paused: you have been idle for ${v.paused}.` : `Paused: idle for ${v.paused}.`)
+  return [picker('lead'), picker('cap'), ...items.flatMap((text, i) => textCells(`ping${i}`, text, 'muted', i === 0 ? '  ' : '· ', room))]
+}
+
+function openCells(v: View, a: PaneActions, s: Surface, which: 'lead' | 'cap', room: number): Cell[] {
+  const list = OPEN_LISTS[which]
+  const current = which === 'lead' ? v.settings.lead : v.settings.idleCap
+  const choose = which === 'lead' ? a.setLead : a.setIdleCap
+  return [
+    ...textCells('ask', list.ask, 'fg', '', room),
+    ...textCells('how', '(click one, or Tab to it and press Enter)', 'muted', '', room),
+    ...list.options.map(o =>
+      buttonCell({ key: `${which}:${o.value}`, label: o.label, isPrimary: o.value === current, press: () => choose(o.value) }, s),
+    ),
+    buttonCell({ key: 'picker-cancel', label: 'Cancel', isPrimary: false, press: () => a.togglePicker(which) }, s),
+  ]
+}
+
+function keepWarmRows(el: Common, v: View, a: PaneActions, room: number, s: Surface): JSX.Element[] {
+  if (v.picker !== '') return cellRows(el, openCells(v, a, s, v.picker, room), room, 'keepwarm')
+  // The full wording unless the short one fits a button into the row or saves a row.
+  const full = closedCells(v, a, s, FULL_PICKERS, room)
+  const short = closedCells(v, a, s, SHORT_PICKERS, room)
+  const rowsOf = (cells: Cell[]) => flowRows(cells, c => c.width, 1, room)
+  const cost = (cells: Cell[]) => (cells.some(c => c.width > room) ? 1000 : 0) + rowsOf(cells).length
+  const cells = cost(short) < cost(full) ? short : full
+  // The hint rides on the last row only where it fits, so it never costs a row.
+  const last = rowsOf(cells).at(-1) ?? []
+  const used = last.reduce((n, c) => n + c.width, 0) + Math.max(0, last.length - 1)
+  const hint = textCell('hint', [muted(PICKER_HINT)], '· ')
+  return cellRows(el, used + 1 + hint.width <= room ? [...cells, hint] : cells, room, 'keepwarm')
+}
+
+function body(el: Common, v: View, a: PaneActions, columns: number, s: Surface) {
+  const { Box } = el
+  const room = Math.max(20, columns - s.inset)
+  const hasCache = v.cache.startedAt > 0
+
+  const specs: PaneButton[] = [
+    ...(hasCache && !v.isExpired ? [{ key: 'warm', label: 'Warm now', press: a.warmNow, isPrimary: false }] : []),
+    keepWarmButton(v, a.toggleKeepWarm),
+    { key: 'compact', label: 'Compact', press: a.compact, isPrimary: false },
+    ...(s.closeLabel === null ? [] : [{ key: 'close', label: s.closeLabel, press: a.close, isPrimary: false, isDismiss: true }]),
+  ]
+  const buttons = specs.map(b => buttonCell(b, s))
+
+  // The status and the buttons share rows. The status takes the richest wording that gives the fewest
+  // rows, and sits three columns clear of the first button beside it.
+  const statusGap = 2
   const levels = HEADER_LEVELS.map(s.header)
-  const oneLine = levels.find(h => h.width + 2 + span(0, count) <= room)
-  const stacked = levels.find(h => h.width <= room) ?? levels[HEADER_LEVELS.length - 1]!
-  const split = HEADER_LEVELS.flatMap(level => Array.from({ length: count - 1 }, (_, i) => ({ h: levels[level]!, k: i + 1 }))).find(
-    ({ h, k }) => h.width + 2 + span(0, k) <= room && span(k, count) <= room,
+  const plans = levels.map(h => flowRows<Cell>([{ key: 'status', width: h.width + statusGap }, ...buttons], c => c.width, 1, room))
+  const best = plans.reduce((bestIndex, p, i) => (p.length < plans[bestIndex]!.length ? i : bestIndex), 0)
+  const [first = [], ...later] = plans[best]!
+  const status = levels[best]!.node
+  const actions = (key: string, cells: readonly Cell[]) => (
+    <Box key={key} flexDirection="row" columnGap={1} alignItems="center">
+      {cells.map(c => buttonEl(el, c.button!))}
+    </Box>
   )
-  const top: JSX.Element[] = oneLine
-    ? [statusRow(oneLine.node, count)]
-    : span(0, count) <= room
-      ? [<Box key="top" flexDirection="column">{stacked.node}{actionsRow('actions', 0, count)}</Box>]
-      : split
-        ? [<Box key="top" flexDirection="column">{statusRow(split.h.node, split.k)}{actionsRow('more', split.k, count)}</Box>]
-        : [<Box key="top" flexDirection="column">{stacked.node}{actionsRow('actions', 0, count)}</Box>]
-  const topLines = oneLine ? 1 : 2
+  const beside = first.slice(1)
+  const top: JSX.Element[] = [
+    beside.length > 0 ? (
+      <Box key="top" flexDirection="row" justifyContent="space-between" alignItems="center">
+        {status}
+        {actions('actions', beside)}
+      </Box>
+    ) : (
+      <Box key="top" flexDirection="row">
+        {status}
+      </Box>
+    ),
+    ...later.map((row, i) => actions(`more${i}`, row)),
+  ]
 
-  // Every control and the latest break stay; the row of history is the one that gives way when the
-  // status and the actions take two lines and the break and the keep-warm row are both there.
-  const brk = breakRuns(v, room)
-  const lines: JSX.Element[] = [...top, runsRow(el, numbersRuns(v, room), 'numbers')]
-  const others = topLines + 1 + (brk ? 1 : 0) + (keepWarm ? 1 : 0)
-  if (v.history.length > 0 && others < MAX_LINES) lines.push(s.history(room))
-  if (brk) lines.push(runsRow(el, brk, 'break'))
-  if (keepWarm) lines.push(keepWarmRow(el, v, a, room, s))
+  const lines: JSX.Element[] = [...top, ...numbersRows(v, room).map((runs, i) => runsRow(el, runs, `numbers${i}`))]
+  if (v.history.length > 0) lines.push(...s.history(room))
+  const brk = breakRows(v, room)
+  if (brk) lines.push(...brk.map((runs, i) => runsRow(el, runs, `break${i}`)))
+  if (v.settings.keepWarm) lines.push(...keepWarmRows(el, v, a, room, s))
   return <Box flexDirection="column">{lines}</Box>
 }
 
@@ -443,15 +503,14 @@ export function terminalPane(el: ElementTable<'terminal'>, v: View, columns: num
       const runs = headerText(v, level)
       return { node: runsRow(el, runs, 'header'), width: runsLength(runs) }
     },
-    history: room => runsRow(el, terminalHistoryRuns(v.history, room), 'history'),
+    history: room => terminalHistoryRows(v.history, room).map((runs, i) => runsRow(el, runs, `history${i}`)),
     closeLabel: null,
     buttonWidth: label => label.length + 4,
-    pickerChrome: 4,
   })
 }
 
 export function desktopPane(el: ElementTable<'desktop'>, v: View, columns: number, a: PaneActions) {
-  // Box, Text, Button and Select draw the same on both surfaces.
+  // Box, Text and Button draw the same on both surfaces.
   return body(el as unknown as Common, v, a, columns, {
     // The desktop's padding is not measured (the app is not driven here), so it keeps the wider margin.
     inset: 6,
@@ -460,9 +519,8 @@ export function desktopPane(el: ElementTable<'desktop'>, v: View, columns: numbe
       // Pixels turned into the columns the room is measured in
       return { node: h.node, width: h.width / 7.5 }
     },
-    history: () => desktopHistory(el, v.history, columns),
+    history: () => [desktopHistory(el, v.history, columns)],
     closeLabel: 'Close',
     buttonWidth: label => (label.length * 7.2 + 30) / 7.5,
-    pickerChrome: 12,
   })
 }

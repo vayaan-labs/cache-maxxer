@@ -1,5 +1,5 @@
 import type { BreakInfo, CacheSettings, CacheState, Pings, Req, Totals } from '../types'
-import { fmtClock, fmtTokens, fmtUsd, pct } from './format'
+import { fmtApprox, fmtClock, fmtTokens, pct } from './format'
 import { writeCostUsd } from './pricing'
 import { ttlInfo, type TtlInfo } from './ttl'
 
@@ -15,7 +15,11 @@ export type View = {
   settings: CacheSettings
   pings: Pings
   paused: string
+  // Which keep-warm picker is open ('lead' or 'cap'), else empty; always empty while keep warm is off
+  picker: Picker
 }
+
+export type Picker = '' | 'lead' | 'cap'
 
 export type Tone = 'fg' | 'muted' | 'warm' | 'warn' | 'danger' | 'accent'
 
@@ -29,11 +33,13 @@ export function makeView(a: {
   settings: CacheSettings
   pings: Pings
   paused: string
+  picker: string
 }): View {
   const ttl = ttlInfo(a.ttlSetting, a.cache.ttlMs)
-  const { now, ...rest } = a
+  const { now, picker, ...rest } = a
   const leftMs = a.cache.startedAt + ttl.ms - now
-  return { ...rest, ttl, leftMs, isExpired: leftMs <= 0 }
+  const isPickerOpen = a.settings.keepWarm && (picker === 'lead' || picker === 'cap')
+  return { ...rest, ttl, leftMs, isExpired: leftMs <= 0, picker: isPickerOpen ? (picker as Picker) : '' }
 }
 
 // Green while warm, amber in the last sixth of the entry's life, red in the last thirtieth, grey once expired.
@@ -66,18 +72,18 @@ export const ttlLabel = (v: View): string =>
 // The same, short: the length alone, for the pane's first line when the room is tight.
 export const ttlShort = (v: View): string => (v.ttl.ms >= 600_000 ? (v.ttl.isKnown ? '1h' : '1h?') : '5m')
 
-// The pings so far, in the pane, piece by piece. A ping that rebuilt a lapsed cache is told apart
-// from one that kept it warm.
+// The pings so far, in the pane, piece by piece. A ping is a background request: it reads the cache and
+// so restarts the entry's timer. One that rebuilt a lapsed cache is told apart from one that kept it warm.
 export function pingsItems(p: Pings): string[] {
   if (p.count === 0 && p.rebuilds === 0) return ['No pings yet.']
-  const parts = [p.count > 0 ? `${p.count} ping${p.count === 1 ? '' : 's'} so far` : 'No ping has kept it warm yet']
-  if (p.count > 0) parts.push(`${fmtTokens(p.read)} tokens read`)
+  const parts = [p.count > 0 ? `${p.count} background ping${p.count === 1 ? '' : 's'} so far` : 'No ping has kept it warm yet']
+  if (p.count > 0) parts.push(`${fmtTokens(p.read)} tokens read from the cache, timer restarted${p.count === 1 ? '' : ' each time'}`)
   if (p.rebuilds > 0) parts.push(`${p.rebuilds} rebuilt a lapsed cache`)
-  if (p.isPriced) parts.push(`~${fmtUsd(p.costUsd)}`)
+  if (p.isPriced) parts.push(fmtApprox(p.costUsd))
   return parts
 }
 
-// What /cache says where nothing draws (a -p run).
+// What /cache-maxxer says where nothing draws (a -p run).
 export function summaryText(v: View): string {
   const keep = `Keep warm is ${v.settings.keepWarm ? 'on' : 'off'}.`
   if (v.cache.startedAt === 0) return `Cache Maxxer: no cache yet. ${keep}`

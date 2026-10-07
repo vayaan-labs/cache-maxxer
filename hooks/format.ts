@@ -15,6 +15,13 @@ export function fmtUsd(n: number): string {
   return `$${n.toFixed(2)}`
 }
 
+// A dollar figure that is an estimate: ~$0.31, "under $0.01" for a smaller cost, and a loss as -$0.06.
+export function fmtApprox(n: number): string {
+  if (n < 0) return fmtUsd(n)
+  if (n > 0 && n < 0.01) return 'under $0.01'
+  return `~${fmtUsd(n)}`
+}
+
 // mm:ss, with two-digit minutes for an hour-long entry so the band keeps its width.
 export function fmtClock(ms: number, ttlMs: number): string {
   const seconds = Math.max(0, Math.ceil(ms / 1000))

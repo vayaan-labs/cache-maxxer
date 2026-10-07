@@ -1,4 +1,4 @@
-import { fmtClock, fmtTokens, fmtUsd } from './format'
+import { fmtApprox, fmtClock, fmtTokens } from './format'
 import { lastRequest, hitRate, rewriteCost, sessionHitRate, stateTone, type Tone, type View } from './view'
 
 export type Run = { text: string; tone: Tone; bold?: boolean }
@@ -14,6 +14,8 @@ export type Seg = {
   // The order pieces are dropped in as the room shrinks, lowest first; null never drops
   rank: number | null
   runs?: Run[]
+  // Shorter wordings of `runs`, longest first, for a piece wider than the room it has
+  alts?: Run[][]
   tone?: Tone
   // The share of the entry's life left, for the track
   frac?: number
@@ -35,6 +37,8 @@ export function buildSegments(v: View): Seg[] {
   if (v.isExpired) {
     const cost = rewriteCost(v)
     const what = v.cache.ctx > 0 ? `${fmtTokens(v.cache.ctx)} tokens` : 'the whole context'
+    const tokens = v.cache.ctx > 0 ? fmtTokens(v.cache.ctx) : 'everything'
+    const price = cost === null ? '' : ` (${fmtApprox(cost)})`
     segs.push(
       { id: 'clock', group: 1, line: 1, rank: null, runs: [{ text: 'expired', tone: 'muted', bold: true }] },
       {
@@ -42,7 +46,8 @@ export function buildSegments(v: View): Seg[] {
         group: 1,
         line: 1,
         rank: null,
-        runs: [muted(` · next message re-writes ${what}${cost === null ? '' : ` (~${fmtUsd(cost)})`}`)],
+        runs: [muted(` · next message re-writes ${what}${price}`)],
+        alts: [[muted(` · next message re-writes ${tokens}${price}`)], [muted(` · re-writes ${tokens}${price}`)]],
       },
     )
   } else {
@@ -76,7 +81,7 @@ export function buildSegments(v: View): Seg[] {
     })
   }
   if (v.totals.isPriced && v.totals.savingsUsd > 0) {
-    segs.push({ id: 'saved', group: 5, line: 2, rank: 2, runs: [muted('saved '), fg(`~${fmtUsd(v.totals.savingsUsd)}`)] })
+    segs.push({ id: 'saved', group: 5, line: 2, rank: 2, runs: [muted('saved '), fg(fmtApprox(v.totals.savingsUsd))] })
   }
   const note = keepWarmNote(v)
   if (note) segs.push({ id: 'note', group: 6, line: 2, rank: 3.5, runs: [muted(note)] })
@@ -107,36 +112,103 @@ function keepWarmNote(v: View): string | null {
 
 const groupChanges = (line: readonly Seg[]) => line.reduce((n, s, i) => n + (i > 0 && line[i - 1]!.group !== s.group ? 1 : 0), 0)
 
-// Chooses what the band shows in the room it has. Terminal text always takes one line; where a
-// second line is allowed it is used only when everything cannot fit on the first. Pieces then drop
-// in rank order (sparkline, savings, totals, keep-warm note, track, context, session hit rate)
-// until each line fits. The countdown and the last request's hit rate never drop.
+// The most lines the band takes before it starts leaving pieces out.
+export const MAX_BAND_LINES = 5
+
+// Chooses what the band shows in the room it has, in this order. Everything on one line where it fits.
+// Otherwise two lines, the countdown and hit rates above the context, totals and notes. Otherwise the
+// pieces flow onto as many lines as they need, a group (countdown, hit rates) kept whole where it fits
+// a line, and a piece wider than a line takes a shorter wording. Only when that needs more than
+// MAX_BAND_LINES lines do pieces drop, in rank order (sparkline, savings, totals, keep-warm note,
+// track, context, session hit rate). The countdown and the last request's hit rate never drop.
 export function planLines(
   segs: readonly Seg[],
   widthOf: (s: Seg) => number,
   sepWidth: number,
   room: number,
-  allowSecondLine: boolean,
+  maxLines: number,
 ): Seg[][] {
   const lineWidth = (l: readonly Seg[]) => l.reduce((n, s) => n + widthOf(s), 0) + groupChanges(l) * sepWidth
-  if (!allowSecondLine || lineWidth(segs) <= room) {
-    return [dropUntilFit([[...segs]], lineWidth, room)[0]!]
-  }
-  const lines = [segs.filter(s => s.line === 1), segs.filter(s => s.line === 2)]
-  return dropUntilFit(lines, lineWidth, room).filter(l => l.length > 0)
-}
+  if (lineWidth(segs) <= room) return [[...segs]]
+  const fixed = [segs.filter(s => s.line === 1), segs.filter(s => s.line === 2)].filter(l => l.length > 0)
+  if (maxLines >= 2 && fixed.length === 2 && fixed.every(l => lineWidth(l) <= room)) return fixed
 
-function dropUntilFit(lines: Seg[][], lineWidth: (l: readonly Seg[]) => number, room: number): Seg[][] {
+  let kept = [...segs]
   for (;;) {
-    if (lines.every(l => lineWidth(l) <= room)) return lines
+    const lines = flowSegs(kept, widthOf, sepWidth, room)
+    if (lines.length <= maxLines) return lines
     let victim: Seg | null = null
-    for (const l of lines) {
-      for (const s of l) if (s.rank !== null && (victim === null || s.rank < victim.rank!)) victim = s
-    }
+    for (const s of kept) if (s.rank !== null && (victim === null || s.rank < victim.rank!)) victim = s
     if (victim === null) return lines
     const gone = victim
-    lines = lines.map(l => l.filter(s => s !== gone))
+    kept = kept.filter(s => s !== gone)
   }
+}
+
+// What a piece says once it starts a line: the separator that joined it to the one before goes.
+const withoutLead = (s: Seg): Seg => {
+  const first = s.runs?.[0]
+  if (!first || !first.text.startsWith(' · ')) return s
+  return { ...s, runs: [{ ...first, text: first.text.slice(3) }, ...s.runs!.slice(1)] }
+}
+
+function flowSegs(segs: readonly Seg[], widthOf: (s: Seg) => number, sepWidth: number, room: number): Seg[][] {
+  const lineWidth = (l: readonly Seg[]) => l.reduce((n, s) => n + widthOf(s), 0) + groupChanges(l) * sepWidth
+  // A piece wider than a whole line takes the longest wording that fits one.
+  const fitted = segs.map(s => {
+    if (!s.alts || widthOf(withoutLead(s)) <= room) return s
+    const alt = s.alts.map(runs => ({ ...s, runs })).find(a => widthOf(withoutLead(a)) <= room)
+    return alt ?? { ...s, runs: s.alts[s.alts.length - 1]! }
+  })
+  const groups: Seg[][] = []
+  for (const s of fitted) {
+    const g = groups[groups.length - 1]
+    if (g && g[0]!.group === s.group) g.push(s)
+    else groups.push([s])
+  }
+  // A group stays whole where it fits a line; one that does not is split into its pieces.
+  const units = groups.flatMap(g => (lineWidth(g) <= room ? [g] : g.map(s => [s])))
+  const lines: Seg[][] = []
+  let cur: Seg[] = []
+  for (const unit of units) {
+    if (cur.length > 0 && lineWidth([...cur, ...unit]) > room) {
+      lines.push(cur)
+      cur = []
+    }
+    cur.push(...unit)
+  }
+  if (cur.length > 0) lines.push(cur)
+  return lines.map((l, i) => (i === 0 ? l : l.map((s, k) => (k === 0 ? withoutLead(s) : s))))
 }
 
 export const runsText = (runs: readonly Run[]) => runs.map(r => r.text).join('')
+
+// Items placed left to right with `gap` columns between them, onto a new row when the next one would
+// pass `room`. An item wider than a row takes a row of its own.
+export function flowRows<T>(items: readonly T[], widthOf: (item: T) => number, gap: number, room: number): T[][] {
+  const rows: T[][] = []
+  let used = 0
+  for (const item of items) {
+    const w = widthOf(item)
+    const row = rows[rows.length - 1]
+    if (row && used + gap + w <= room) {
+      row.push(item)
+      used += gap + w
+    } else {
+      rows.push([item])
+      used = w
+    }
+  }
+  return rows
+}
+
+// Text cut at spaces into lines of at most `room` columns (a word longer than a line takes its own).
+export function wrapWords(text: string, room: number): string[] {
+  const lines: string[] = []
+  for (const word of text.split(' ')) {
+    const last = lines[lines.length - 1]
+    if (last !== undefined && last.length + 1 + word.length <= room) lines[lines.length - 1] = `${last} ${word}`
+    else lines.push(word)
+  }
+  return lines
+}
