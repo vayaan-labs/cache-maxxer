@@ -70,7 +70,7 @@ export function rewriteCost(v: View): number | null {
 
 // What the person sees of how long an entry lives: the length, or the assumed hour.
 export const ttlLabel = (v: View): string =>
-  v.ttl.ms >= 600_000 ? (v.ttl.isKnown ? '1 hour cache' : '1 hour (assumed)') : '5 minute cache'
+  v.ttl.ms >= 600_000 ? (v.ttl.isKnown ? '1 hour cache' : '1 hour cache, assumed') : '5 minute cache'
 
 // The pings so far, in the band's keep-warm row, piece by piece. A ping is a background request: it reads the cache and
 // so restarts the entry's timer. One that rebuilt a lapsed cache is told apart from one that kept it warm.

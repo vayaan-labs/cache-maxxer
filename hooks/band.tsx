@@ -115,11 +115,7 @@ function statusItems(v: View): Item[] {
   items.push({ key: 'track', runs: [{ text: '━'.repeat(filled), tone }, muted('─'.repeat(TRACK - filled))] })
   if (tone !== 'warm') items.push({ key: 'word', runs: [{ text: stateWord(v).toLowerCase(), tone }] })
   const isHour = v.ttl.ms >= 600_000
-  items.push(
-    v.ttl.isKnown
-      ? { key: 'length', runs: [muted(ttlLabel(v))], alts: [[muted(isHour ? '1h cache' : '5m cache')]] }
-      : { key: 'length', runs: [muted('1 hour cache, assumed')], alts: [[muted('1h, assumed')]] },
-  )
+  items.push({ key: 'length', runs: [muted(ttlLabel(v))], alts: [[muted(v.ttl.isKnown ? (isHour ? '1h cache' : '5m cache') : '1h, assumed')]] })
   const last = lastRequest(v)
   if (last) items.push({ key: 'hit', runs: [fig(`${hitRate(last)}%`, true), muted(' hit')] })
   return items
@@ -129,7 +125,8 @@ const ITEM_GAP = 2
 const itemsWidth = (items: readonly Item[]) => items.reduce((n, it) => n + runsLength(it.runs), 0) + ITEM_GAP * Math.max(0, items.length - 1)
 
 // The first line in `room`, every piece in the fullest wording that fits: the full wordings, else
-// the widest pieces shortened first. Null when even the shortest wordings do not fit.
+// pieces shortened in order, left to right, until the line fits. Null when even the shortest
+// wordings do not fit.
 function fitItems(items: readonly Item[], room: number): Item[] | null {
   const out = [...items]
   for (let i = 0; i < out.length && itemsWidth(out) > room; i++) {
@@ -571,7 +568,7 @@ function desktopHeader(el: ElementTable<'desktop'>, v: View) {
   const x = 22
   const bigPx = textPx(big, true) * size * FONT_RATIO
   const word = live ? stateWord(v) : ''
-  const length = hasCache ? (v.ttl.isKnown ? ttlLabel(v) : '1 hour cache, assumed') : ''
+  const length = hasCache ? ttlLabel(v) : ''
   const afterX = x + bigPx + 12
   const width = Math.ceil(afterX + textPx(word, true) * (13 / 12) * 1.1 + (word ? 10 : 0) + textPx(length) * (13 / 12) * 1.12 + 6)
   const dot =
