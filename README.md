@@ -4,7 +4,7 @@
 
 Claude Code keeps your conversation in a prompt cache, so each new message does not pay full price to re-read everything said before it. That cache runs out after an idle spell, and Claude Code never tells you. The next message then pays to write the whole conversation again, which costs more and answers slower. Cache Maxxer puts the cache's countdown and hit rate above your input box like a status line, tells you why whenever the cache breaks or expires, and can keep it warm to cut your Claude Code cost.
 
-![The Cache Maxxer band above the input box in a terminal: a green countdown at 58:53 with a track, a 100% hit rate on the last request and 89% over the session, 38K tokens of context, 67K read and 8.4K written, about $0.10 saved, and the buttons Keep warm: on, Warm now and Details.](assets/band.png)
+![The Cache Maxxer band above the input box in a terminal: a green countdown at 58:53 with a track that drains, a 1 hour cache, a 97% hit rate on the last request, and the buttons Keep warm: off, Warm now and More.](assets/band.png)
 
 ## Why the cache matters
 
@@ -12,13 +12,21 @@ While the cache is warm, each request reads your conversation at a small fractio
 
 ## Know where your cache stands
 
-A band appears above the input box as soon as your conversation has a cache. From left to right it shows a status dot, a countdown to expiry with a track that drains as time passes, the hit rate of the last request and of the whole session, the size of the context your next message sends, what the session has read from and written to the cache, what the cache has saved you in dollars, and a small chart of recent requests.
+A band appears above the input box as soon as your conversation has a cache. It is one line: a status dot, a countdown to expiry with a track that drains as time passes, how long your cache lives, and the hit rate of the last request. Beside it are three buttons: Keep warm, Warm now (Compact once the cache has expired) and More.
 
-The countdown is green while the cache is warm, amber in the last sixth of its life, red in the last thirtieth, and grey once it has expired. When it has expired the band says what your next message will re-write and roughly what that costs. The saved figure appears once reads have paid back the cost of the writes, so it is missing for the first message or two of a session.
+The countdown is green while the cache is warm, amber in the last sixth of its life and red in the last thirtieth, where the band also says "expiring soon", and grey once it has expired. When it has expired the band says what your next message will re-write and roughly what that costs. The colors are your Claude Code theme's own, so the band matches the rest of your terminal.
 
-When there is less room the band takes a second line and then more: the countdown and hit rates stay together, and the context size, totals, savings and keep-warm note follow below, each kept whole. The buttons stay whole too, moving to another line where they do not fit side by side. Only a band that would need more than five lines starts leaving pieces out, in this order: the chart, savings, totals, the keep-warm note, the track, the context size, then the session hit rate. The countdown and the last request's hit rate always stay. Whatever other plugins draw in the same spot stays too, shown under the band. The Desktop app draws the same band with clickable buttons.
+Press More, or run `/cache-maxxer`, and the band opens in place to show the detail under that line:
 
-The band comes with buttons: Keep warm (on or off), Warm now while the cache is warm, Compact once it has expired, and Details.
+- **This session**: the hit rate, the number of requests, the tokens read from the cache, written to it and sent uncached, the size of the context your next message sends, and, for models with a known price, the dollars saved and spent on writes. The saved figure goes negative early in a session, while the writes have not yet been paid back by reads.
+- **Requests**: one bar for each of the last requests, newest on the right, colored by what most of it was (read, written or uncached), with a mark for each break.
+- **Last break**: when the cache last broke, how much was re-written, roughly what that cost and why, and how many breaks came before it. It is absent while there are none.
+
+Press Less to close it again. Whether the detail is open is remembered for new sessions.
+
+![The band opened: the same first line, then This session with the hit rate, requests and tokens, Requests with a row of bars and its legend, and Last break with its time, size, cost and cause.](assets/band-open.png)
+
+The band reflows to the room it has instead of cutting anything off. Where the status and the buttons do not fit side by side the buttons move to a line of their own; the cache length shortens to "1h cache"; in a narrow terminal each label moves above its values. Whatever other plugins draw in the same spot stays, shown under the band. While the band has the keyboard (click it, or press ctrl+x tab), K toggles keep warm, W warms now, C compacts and M opens or closes the detail. The Desktop app draws the same band, with the countdown and the request bars as small graphics.
 
 Dollar figures are known for Opus 5.5, Sonnet 5.5 and Haiku 4.5, matched by model id. For any other model Cache Maxxer shows tokens only and never guesses a price.
 
@@ -34,25 +42,13 @@ With keep warm off, you also get one notice when the cache is about to run out: 
 
 Keep warm is off by default. When it is on, your session is idle and the cache is about to run out, Cache Maxxer sends one very short request over your conversation asking for a one-word reply. That request reads the cached context, which resets the cache's timer, and Cache Maxxer notes the ping and what it cost. It sends one at a time, never while Claude is working, and does not retry in a loop if one fails: it tells you why and leaves that expiry alone. Warm now does the same once, when you ask. Either way you get a notice in plain words, such as "Cache kept warm · a background request read 57K tokens from it, so the timer restarted".
 
-A ping costs about the size of your context times the cache-read price. For a 180K token Opus 5.5 conversation that is a few cents, against well over a dollar to re-write the same context after a lapse. With a five minute cache it pings every few minutes, so it adds up much faster than with an hour cache. If a ping finds the cache had already lapsed, it rebuilt the cache instead: the notice says so with what was written and what it cost, the cache is warm again, and the band's keep-warm note counts it as a rebuild rather than as a ping that kept the cache warm.
+A ping costs about the size of your context times the cache-read price. For a 180K token Opus 5.5 conversation that is a few cents, against well over a dollar to re-write the same context after a lapse. With a five minute cache it pings every few minutes, so it adds up much faster than with an hour cache. If a ping finds the cache had already lapsed, it rebuilt the cache instead: the notice says so with what was written and what it cost, the cache is warm again, and the band's keep-warm row counts it as a rebuild rather than as a ping that kept the cache warm.
 
 Keep warm stops once you have not sent anything for the idle cap (three hours unless you change it), and the band says so, so a session you walked away from does not keep spending. It starts again when you send your next message.
 
-## The Details pane
+While keep warm is on, the band shows its own row, open or closed: how long before expiry to ping and when to stop after you have been idle, as buttons that end in an arrow, such as "Ping: automatically before expiry ▾". Click one and its options appear as buttons in the same row: click one, or Cancel to leave it as it was. Beside them is a count of the pings so far, the tokens those background requests read from the cache and what they cost, and, if keep warm has stopped because you were idle, that it has paused. Where the room is short the choices use shorter wording, "Ping: auto ▾", and the ping details continue on the next line.
 
-Press Details, or run `/cache-maxxer`, for the pane. In a terminal it takes five lines where the pane is wide (about 120 columns or more), and its rows flow onto more lines as it narrows, so nothing is cut off.
-
-![The Details pane in a terminal: a green countdown at 54:08, a 1 hour cache marked Warm, and the buttons Warm now, Keep warm: off and Compact on the same line; below, the session's hit rate, requests, tokens read, written and uncached, and dollars saved and spent on writes; below that, one row of request bars with a legend for read, written, uncached and break.](assets/pane-terminal.png)
-
-The first line is the status: the countdown, how long your cache lives, and its state (Warm or Expiring soon; once the cache has run out the countdown reads expired). The buttons sit on the same line: Warm now while the cache is live, the Keep warm toggle, and Compact. Where that line is too narrow, the status shortens (the cache length becomes 1h or 5m and then goes, then the state word) or the buttons move to a line of their own, whichever takes fewer lines, and the buttons are never cut. In a wide terminal Claude Code docks the pane at the side, where it is narrower than the terminal. The next lines hold the session's numbers: hit rate, requests, tokens read, written and uncached, and, for models with a known price, the dollars saved and spent on writes. They fill a line and the rest continue on the next. Then the history, one bar for each of the last requests with the newest on the right, and a legend for read, written, uncached and break; where the legend does not fit beside the bars it takes a line below them.
-
-When the cache has broken, one more line gives the latest break: when it happened, how much was re-written, roughly what that cost and why, with a count of earlier breaks. In a narrow pane it continues on the next line, the cause cut at its spaces. It is absent while there are none.
-
-While Keep warm is on, the pane adds the two pickers, how long before expiry to ping and when to stop after you have been idle, drawn as buttons that end in an arrow, such as "Ping: automatically before expiry ▾". Press one, with a click or with Tab and Enter, and its options appear as buttons: choose one, or press Cancel to leave it as it was. Next to the pickers is a count of the pings so far, the tokens those background requests read from the cache and what they cost; if keep warm has stopped because you were idle, it says so there. Where the room is short the pickers use shorter wording and the ping details continue on the next line.
-
-![The Details pane with Keep warm on: the same status, numbers and history lines, then a line with the pickers "Ping: automatically before expiry" and "Stop: after 3 hours idle", and "No pings yet."](assets/pane-terminal-keep-warm.png)
-
-In the Desktop app the pane has the same lines, with the status and the history drawn as small graphics and a Close button.
+![The band with keep warm on: the first line with Keep warm: on highlighted, and a Keep warm row with the buttons "Ping: automatically before expiry" and "Stop: after 3 hours idle", and "No pings yet."](assets/band-keep-warm.png)
 
 ## Get started
 
@@ -66,11 +62,11 @@ In the Desktop app the pane has the same lines, with the status and the history 
 
 3. **Send a message.** The band appears above the input box once your conversation has a cache, which is after your first reply. If Claude Code was already open when you installed, run `/reload-plugins` in that session first, or start a new one.
 
-Tested with Claude Code 2.1.289 on macOS, in the terminal. The Desktop app route follows the app's own labels, but its band and pane have not been run by us yet.
+Tested with Claude Code 2.1.289 on macOS, in the terminal. The Desktop app route follows the app's own labels, but its band has not been run by us yet.
 
 ## Commands
 
-`/cache-maxxer` opens the Details pane, or prints a one-line summary where nothing can be drawn (a `claude -p` run). `/cache-maxxer warm` sends one ping. `/cache-maxxer keep on` and `/cache-maxxer keep off` set the keep-warm toggle, which is remembered as the default for new sessions. They run immediately, even while Claude is working. A ping never goes out during a turn, so `/cache-maxxer warm` then tells you Claude is working and sends nothing.
+`/cache-maxxer` opens the band's detail (and shows the band before your first message, to say there is no cache yet), or prints a one-line summary where nothing can be drawn (a `claude -p` run). `/cache-maxxer less` closes the detail. `/cache-maxxer warm` sends one ping. `/cache-maxxer keep on` and `/cache-maxxer keep off` set the keep-warm toggle, which is remembered as the default for new sessions. They run immediately, even while Claude is working. A ping never goes out during a turn, so `/cache-maxxer warm` then tells you Claude is working and sends nothing.
 
 ## Settings
 
@@ -84,7 +80,7 @@ Cache Maxxer has three settings, each a choice from a short list. In a terminal,
 }
 ```
 
-`ttl` is how long the cache lives: `auto` (the default) reads it from the newest cache write in your session transcript, looking again every 15 seconds until it has seen one (the transcript can lag a moment behind the reply) and then after a turn at most every 10 minutes, or from the length Claude Code reports when you switch model, and assumes an hour, shown as "1h?", until it knows. `1h` and `5m` fix it.
+`ttl` is how long the cache lives: `auto` (the default) reads it from the newest cache write in your session transcript, looking again every 15 seconds until it has seen one (the transcript can lag a moment behind the reply) and then after a turn at most every 10 minutes, or from the length Claude Code reports when you switch model, and assumes an hour, shown as "1 hour cache, assumed", until it knows. `1h` and `5m` fix it.
 
 `lead` is how long before expiry the notice and the ping come: `auto` is 4 minutes for an hour cache and 40 seconds for five minutes, or pick 1, 2, 4 or 8 minutes (never more than half the cache's life).
 
@@ -98,7 +94,7 @@ Everything else stays local, and this is all it runs or reads:
 
 - To learn the cache length, it runs `find` to locate your session's transcript under your Claude config folder (`CLAUDE_CONFIG_DIR`, or `~/.claude`) and `tail` to read at most the last 256 KiB of it, which is the whole file when the transcript is shorter than that. It looks only at the cache-write token counts in what it reads, and it only does this when `ttl` is `auto`.
 - When you press Compact, it asks Claude Code to compact the conversation, which is a request to the model.
-- It remembers the keep-warm toggle in the plugin's own saved data. Everything else it tracks (the numbers behind the band and pane) lives in memory for the session.
+- It remembers the keep-warm toggle and whether the band's detail is open in the plugin's own saved data. Everything else it tracks (the numbers behind the band) lives in memory for the session.
 
 ## Updating and removing
 
@@ -108,7 +104,7 @@ Update with `claude plugin marketplace update vayaan-labs` and then `claude plug
 
 **No band.** The band appears once your conversation has a cache, which is after the first reply, and only when the plugin is enabled (`claude plugin list` shows it). If Claude Code was open when you installed, run `/reload-plugins`. If it still does not appear, update Claude Code, since this plugin is tested on 2.1.289 only.
 
-**The countdown shows "1h?".** Cache Maxxer has not yet seen how long your cache lives and is assuming an hour. It looks in your session every 15 seconds until it finds a cache write, or you can set `ttl` yourself.
+**The band says "assumed".** Cache Maxxer has not yet seen how long your cache lives and is assuming an hour. It looks in your session every 15 seconds until it finds a cache write, or you can set `ttl` yourself.
 
 **No dollar figures.** Prices are built in for Opus 5.5, Sonnet 5.5 and Haiku 4.5 only. With any other model you get token counts and no dollar amounts.
 

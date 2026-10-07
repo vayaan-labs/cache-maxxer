@@ -1,4 +1,4 @@
-// What the band and the pane draw from. Every value is plain JSON, so it survives a reload of the module.
+// What the band draws from. Every value is plain JSON, so it survives a reload of the module.
 
 // One request of the main conversation.
 export type Req = {
@@ -69,8 +69,10 @@ declare module 'claude-code' {
       activity: number
       // The idle cap's label once keep warm has stopped for lack of activity, else empty
       paused: string
-      // Which keep-warm picker is open in the Details pane ('lead' or 'cap'), else empty
+      // Which keep-warm choice has its options open in the band ('lead' or 'cap'), else empty
       picker: string
+      // Whether the band shows the session's detail under its first line
+      expanded: boolean
       // The second the countdown last moved, written each second so the band redraws
       tick: number
     }

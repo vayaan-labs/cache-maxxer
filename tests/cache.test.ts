@@ -75,6 +75,7 @@ async function boot($: Engine, on: On, transcript: { path: string; tail: string 
   on('session.end', () => ({ sessionId: 'session-1' }) as never)
   on('session.start', () => ({ cwd: '/work' }))
   on('command.register', () => ({ value: undefined }) as never)
+  on('session.surfaces', () => ({ value: ['terminal'] }) as never)
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
 
   const request = async (use: Use, extra: Record<string, unknown> = {}) => {
@@ -86,36 +87,33 @@ async function boot($: Engine, on: On, transcript: { path: string; tail: string 
   return { clock, toasts, fork, request }
 }
 
+
 // The command, as the person types it.
 const keepWarmOn = ($: Engine) => $.command.run({ command: 'cache-maxxer', args: 'keep on' } as never)
+const keepWarmOff = ($: Engine) => $.command.run({ command: 'cache-maxxer', args: 'keep off' } as never)
+const openDetail = ($: Engine) => $.command.run({ command: 'cache-maxxer', args: '' } as never)
+const closeDetail = ($: Engine) => $.command.run({ command: 'cache-maxxer', args: 'less' } as never)
 
 const BAND = (columns: number) =>
-  ({ hasSurvey: false, isWorking: false, maxRows: 6, bodyColumns: columns, scroll: { offset: 0, bodyRows: 6 }, view: {} }) as never
-const PANE = (columns: number) =>
-  ({ title: 'Cache Maxxer', isFocused: true, bodyColumns: columns, placement: 'inline', scroll: { offset: 0, bodyRows: 40 }, view: {} }) as never
+  ({ hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: columns, scroll: { offset: 0, bodyRows: 20 }, view: {} }) as never
 
 const band = ($: Engine, surface: 'terminal' | 'desktop', columns = 200) =>
   $.ui.mount({ plugin: 'cache-maxxer', surface, component: 'AbovePrompt', props: BAND(columns) })
-const pane = ($: Engine, surface: 'terminal' | 'desktop', columns = 80) =>
-  $.ui.mount({ plugin: 'cache-maxxer', surface, component: 'Pane', requestId: 'cache-maxxer', props: PANE(columns) })
 
 const textsOf = async (ui: { findAll: (q: { type: string }) => Promise<{ text: string }[]> }) =>
   (await ui.findAll({ type: 'Text' })).map(t => t.text).join('')
 
-type Drawn = { type?: string; props?: { flexDirection?: string }; children?: unknown[] }
-
-// The lines a drawn pane takes: a row is one line, a column is its children stacked.
-function linesOf(node: unknown): number {
-  const drawn = node as Drawn
-  if (typeof node === 'string' || drawn.type !== 'Box') return 1
-  const kids = (drawn.children ?? []).map(linesOf)
-  return drawn.props?.flexDirection === 'column' ? kids.reduce((a, b) => a + b, 0) : Math.max(1, ...kids)
-}
+const labelsOf = async (ui: { findAll: (q: { type: string }) => Promise<{ props: { label?: unknown } }[]> }) =>
+  (await ui.findAll({ type: 'Button' })).map(b => b.props.label)
 
 // How a drawn node reads in a terminal: text as it is, a button as "[ label ]", the pieces of a row
-// side by side (a row's column gap between them) and the rows of a column one under another.
-type DrawnProps = { flexDirection?: string; columnGap?: number; label?: string }
+// side by side (a row's column gap between them, a Box of fixed width taking that width) and the rows
+// of a column one under another.
+type DrawnProps = { flexDirection?: string; columnGap?: number; label?: string; width?: number; color?: string }
 type Node = { type?: string; props?: DrawnProps; children?: unknown[] }
+
+const textIn = (node: unknown): string => (typeof node === 'string' ? node : ((node as Node).children ?? []).map(textIn).join(''))
+
 function rowsOf(node: unknown): string[] {
   if (typeof node === 'string') return [node]
   const n = node as Node
@@ -123,16 +121,8 @@ function rowsOf(node: unknown): string[] {
   if (n.type !== 'Box') return [textIn(node)]
   const kids = (n.children ?? []).map(rowsOf)
   if (n.props?.flexDirection === 'column') return kids.flat()
-  return [kids.map(k => k.join(' ')).join(' '.repeat(n.props?.columnGap ?? 0))]
-}
-
-// The drawn rows wider than the room they have: text that would wrap or be cut.
-const textIn = (node: unknown): string => (typeof node === 'string' ? node : ((node as Drawn).children ?? []).map(textIn).join(''))
-function overflowing(node: unknown, width: number): string[] {
-  const drawn = node as Drawn
-  if (typeof node === 'string' || drawn.type !== 'Box') return []
-  if (drawn.props?.flexDirection !== 'column') return cellsIn(node) > width ? [rowsOf(node).join(' ')] : []
-  return (drawn.children ?? []).flatMap(k => overflowing(k, width))
+  const row = kids.map(k => k.join(' ')).join(' '.repeat(n.props?.columnGap ?? 0))
+  return [typeof n.props?.width === 'number' ? row.padEnd(n.props.width) : row]
 }
 
 // The columns a drawn row takes: its texts and buttons side by side with the row's gaps between.
@@ -142,24 +132,47 @@ function cellsIn(node: unknown): number {
   if (n.type === 'Button') return (n.props?.label?.length ?? 0) + 4
   if (n.type !== 'Box') return textIn(node).length
   const kids = (n.children ?? []).map(cellsIn)
-  return n.props?.flexDirection === 'column' ? Math.max(0, ...kids) : kids.reduce((a, b) => a + b, 0) + (n.props?.columnGap ?? 0) * Math.max(0, kids.length - 1)
+  const own = n.props?.flexDirection === 'column' ? Math.max(0, ...kids) : kids.reduce((a, b) => a + b, 0) + (n.props?.columnGap ?? 0) * Math.max(0, kids.length - 1)
+  return typeof n.props?.width === 'number' ? Math.max(own, n.props.width) : own
 }
 
-// The pane's own width in a real terminal is not the terminal's: inline at 76 columns in one 80 wide,
-// docked at the side at 49 in one 120 wide and 71 in one 160 wide, and as narrow as 38 just past the
-// width where it docks. From 120 columns the pane holds to five lines; narrower, its rows wrap onto
-// more lines rather than cut anything. At every width no row of the terminal pane is wider than the pane.
-const PANE_WIDTHS = [38, 40, 49, 60, 71, 76, 90, 104, 120, 200, 250]
+// The drawn rows wider than the room they have: text that would wrap or be cut.
+function overflowing(node: unknown, width: number): string[] {
+  const n = node as Node
+  if (typeof node === 'string' || n.type !== 'Box') return []
+  if (n.props?.flexDirection !== 'column') return cellsIn(node) > width ? [rowsOf(node).join(' ')] : []
+  return (n.children ?? []).flatMap(k => overflowing(k, width))
+}
 
-async function expectPaneFits($: Engine, state: string, fiveLinesFrom = 120) {
-  for (const surface of ['terminal', 'desktop'] as const) {
-    for (const columns of PANE_WIDTHS) {
-      const ui = await $.ui.mount({ plugin: 'cache-maxxer', surface, component: 'Pane', requestId: 'cache-maxxer', props: PANE(columns) })
-      const [root] = await ui.findAll({ type: 'Box' })
-      if (columns >= fiveLinesFrom) expect(linesOf(root), `${state}, ${surface}, ${columns} wide`).toBeLessThanOrEqual(5)
-      if (surface === 'terminal') expect(overflowing(root, columns), `${state}, ${columns} wide: a row wider than the pane`).toEqual([])
-      await ui.unmount()
-    }
+// The lines the band takes, the line another mod drew under it included.
+function linesOf(node: unknown): number {
+  const n = node as Node
+  if (typeof node === 'string' || n.type !== 'Box') return 1
+  const kids = (n.children ?? []).map(linesOf)
+  return n.props?.flexDirection === 'column' ? kids.reduce((a, b) => a + b, 0) : Math.max(1, ...kids)
+}
+
+// Every color a terminal Text names: the band draws in the person's theme, so each is a theme key.
+function colorsIn(node: unknown, out: string[] = []): string[] {
+  const n = node as Node
+  if (typeof node === 'string' || !n) return out
+  if (n.type === 'Text' && n.props?.color) out.push(n.props.color)
+  for (const k of n.children ?? []) colorsIn(k, out)
+  return out
+}
+
+const WIDTHS = [...Array.from({ length: 91 }, (_, i) => 40 + i), 140, 160, 200, 250]
+
+// At every width the terminal band draws no row wider than itself, on both surfaces the buttons are
+// whole, and the text holds every part in `parts`.
+async function expectBandFits($: Engine, state: string, parts: readonly string[] = []) {
+  for (const columns of WIDTHS) {
+    const ui = await band($, 'terminal', columns)
+    const [root] = await ui.findAll({ type: 'Box' })
+    expect(overflowing(root, columns), `${state}, ${columns} wide: a row wider than the band`).toEqual([])
+    const text = (await textsOf(ui)) + (await labelsOf(ui)).join(' ')
+    for (const part of parts) expect(text, `${state}, ${columns} wide: ${part}`).toContain(part)
+    await ui.unmount()
   }
 }
 
@@ -215,8 +228,8 @@ fiveMinute('a rebuilt cache is explained once, and subagent requests do not coun
   // The warning that the entry was about to lapse came first, while keep warm was off.
   expect(toasts).toEqual(['Cache expires in 40s · Warm now to keep it', 'Cache rebuilt · 182K tokens re-written · expired after 63m idle'])
 
-  const ui = await pane($, 'terminal')
-  const text = await textsOf(ui)
+  await openDetail($)
+  const text = await textsOf(await band($, 'terminal'))
   // Two main requests: the subagent's one is not among them.
   expect(text).toContain('2 requests')
   expect(text).toContain('182K re-written')
@@ -254,7 +267,8 @@ fiveMinute('the first request after /clear is told apart from a fresh session, a
   await $.session.end({ reason: 'clear' } as never)
   await request({ read: 0, written: 60_000, uncached: 20, output: 300 })
   expect(toasts).toEqual(['Cache rebuilt · 60K tokens re-written · cleared'])
-  expect(await textsOf(await pane($, 'terminal'))).toContain('1 request')
+  await openDetail($)
+  expect(await textsOf(await band($, 'terminal'))).toContain('1 request')
 })
 
 fiveMinute('keep warm pings once at the lead time and restarts the entry', async ($, on) => {
@@ -272,7 +286,8 @@ fiveMinute('keep warm pings once at the lead time and restarts the entry', async
   await clock.advance(30 * 1000)
   const ui = await band($, 'terminal')
   expect(await textsOf(ui)).toMatch(/4:[0-9]{2}/)
-  expect(await textsOf(ui)).toContain('kept warm ×1')
+  // The keep-warm row shows with keep warm on, the detail closed or not.
+  expect(await textsOf(ui)).toContain('1 background ping so far')
   expect(toasts).toEqual([])
 })
 
@@ -290,17 +305,12 @@ fiveMinute('a ping that finds the cache already gone says it rebuilt it and does
   expect(fork.calls).toBe(1)
   expect(toasts).toEqual(['The cache had already expired, so the background request rebuilt it · 61K tokens written, timer restarted · ~$0.31'])
 
-  // The rebuilt entry is warm from the ping on, and the count line does not call it a kept-warm ping.
+  // The rebuilt entry is warm from the ping on, and the keep-warm row does not call it a kept-warm ping.
   await clock.advance(30 * 1000)
   expect(fork.calls).toBe(1)
-  const ui = await band($, 'terminal')
-  const line = await textsOf(ui)
-  expect(line).toMatch(/Cache 4:[0-9]{2}/)
-  expect(line).toContain('rebuilt ×1')
-  expect(line).not.toContain('kept warm')
-  // The whole line is there where the room allows it.
-  const details = await pane($, 'terminal', 160)
-  expect(await textsOf(details)).toContain('No ping has kept it warm yet · 1 rebuilt a lapsed cache · ~$0.31')
+  const text = await textsOf(await band($, 'terminal', 200))
+  expect(text).toMatch(/● 4:[0-9]{2}/)
+  expect(text).toContain('No ping has kept it warm yet · 1 rebuilt a lapsed cache · ~$0.31')
 })
 
 fiveMinute('keep warm waits for a running turn, and pings once it ends', async ($, on) => {
@@ -344,8 +354,9 @@ idleCap('keep warm stops once the person has been idle past the cap', async ($, 
   await clock.advance(66 * MINUTE)
   const pinged = fork.calls
   expect(pinged).toBeGreaterThan(5)
-  const ui = await band($, 'desktop')
-  expect((await ui.find({ type: 'Svg' }))?.props.alt).toContain('keep warm paused (idle 1h)')
+  for (const surface of ['terminal', 'desktop'] as const) {
+    expect(await textsOf(await band($, surface)), surface).toMatch(/Paused: (you have been )?idle for 1h\./)
+  }
 
   await clock.advance(10 * MINUTE)
   expect(fork.calls).toBe(pinged)
@@ -359,6 +370,8 @@ fiveMinute('warn once with keep warm off, and Warm now pings once on demand', as
   expect(fork.calls).toBe(0)
 
   const ui = await band($, 'terminal')
+  // Warm now has a key of its own while the band has the focus.
+  expect((await ui.find({ key: 'warm' }))?.props.hotkey).toBe('w')
   await ui.press({ key: 'warm' })
   expect(fork.calls).toBe(1)
   expect(toasts[1]).toBe('Cache kept warm · a background request read 61K tokens from it, so the timer restarted · ~$0.01')
@@ -398,140 +411,127 @@ slow('auto learns the entry life once the transcript holds the write, though it 
   await $.turn.complete({ answer: 'done', durationMs: 1000, isAborted: false, turnId: 't1', reason: 'answer', usage: null } as never)
   await clock.advance(5 * 1000)
   const early = await band($, 'terminal')
-  expect(await textsOf(early)).toContain('1h?')
+  expect(await textsOf(early)).toContain('1 hour cache, assumed')
   await early.unmount()
 
   transcript.tail = `{"type":"system"}\n${line}\n`
   await clock.advance(20 * 1000)
-  const ui = await band($, 'terminal')
-  // Five minutes, known: no "1h?" guess, and the pane stops saying assumed.
-  expect(await textsOf(ui)).toMatch(/Cache 4:[0-9]{2}/)
-  expect(await textsOf(ui)).not.toContain('1h?')
-  const details = await pane($, 'terminal')
-  expect(await textsOf(details)).toContain('5 minute cache')
-  expect(await textsOf(details)).not.toContain('assumed')
+  const text = await textsOf(await band($, 'terminal'))
+  // Five minutes, known: the countdown is a five-minute one and nothing says assumed.
+  expect(text).toMatch(/● 4:[0-9]{2}/)
+  expect(text).toContain('5 minute cache')
+  expect(text).not.toContain('assumed')
 })
 
-slow('the band shows the countdown, hit rates, context, totals and savings on both surfaces', async ($, on) => {
+slow('closed, the band is one line: the countdown, the cache length, the hit rate and the buttons', async ($, on) => {
   const { clock, request } = await boot($, on)
-  // Nothing to show before the first request.
+  // Nothing to show before the first request, until the detail is asked for.
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await band($, surface)
-    expect(await ui.find({ type: 'Svg' })).toBeUndefined()
     expect(await textsOf(ui)).toBe('drawn by Claude Code')
     await ui.unmount()
   }
+  await openDetail($)
+  const empty = await band($, 'terminal')
+  expect(await textsOf(empty)).toContain('No cache yet')
+  expect(await textsOf(empty)).toContain('No requests yet')
+  expect(await labelsOf(empty)).toEqual(['Keep warm: off', 'Less ▴'])
+  await empty.unmount()
+  await closeDetail($)
 
   for (const use of THREE) await request(use)
   await clock.advance(10 * 1000)
 
   const terminal = await band($, 'terminal')
-  const line = await textsOf(terminal)
-  expect(line).toContain('Cache 59:50 1h?')
-  expect(line).toContain('97% now · 65% session')
-  expect(line).toContain('63K ctx')
-  expect(line).toContain('121K read · 64K written')
-  expect(line).toContain('saved ~$0.20')
-  expect((await terminal.findAll({ type: 'Button' })).map(b => b.props.label)).toEqual(['Keep warm: off', 'Warm now', 'Details'])
-  // What the mods after this one draw in the same place stays, drawn after the band.
-  expect(line.endsWith('drawn by Claude Code')).toBe(true)
+  const [root] = await terminal.findAll({ type: 'Box' })
+  const text = await textsOf(terminal)
+  expect(text).toContain('● 59:50')
+  expect(text).toContain('━')
+  expect(text).toContain('1 hour cache, assumed')
+  expect(text).toContain('97% hit')
+  // The session's numbers wait for the detail.
+  expect(text).not.toContain('requests')
+  expect(await labelsOf(terminal)).toEqual(['Keep warm: off', 'Warm now', 'More ▾'])
+  // One line, then the line another mod drew in the same place.
+  expect(linesOf(root)).toBe(2)
+  expect(text.endsWith('drawn by Claude Code')).toBe(true)
+  // Every color is one of the person's theme keys, never a fixed color.
+  for (const color of colorsIn(root)) expect(['inactive', 'success', 'warning', 'error', 'claude'], color).toContain(color)
+  await terminal.unmount()
 
   const desktop = await band($, 'desktop')
   const svg = await desktop.find({ type: 'Svg' })
-  for (const part of ['59:50', '97% now · 65% session', '63K ctx', '121K read · 64K written', 'saved ~$0.20']) {
-    expect(svg?.props.alt).toContain(part)
-  }
-  expect(String(svg?.props.source)).toContain('>97%<')
+  expect(svg?.props.alt).toContain('59:50')
+  expect(svg?.props.alt).toContain('1 hour cache, assumed')
+  expect(await textsOf(desktop)).toContain('97% hit')
   expect(await textsOf(desktop)).toContain('drawn by Claude Code')
-  expect((await desktop.findAll({ type: 'Button' })).map(b => b.props.label)).toEqual(['Keep warm: off', 'Warm now', 'Details'])
-  await terminal.unmount()
+  expect(await labelsOf(desktop)).toEqual(['Keep warm: off', 'Warm now', 'More ▾'])
   await desktop.unmount()
 
   // Once the entry lapses the band says what the next message re-writes, and offers to compact.
   await clock.advance(61 * MINUTE)
   const expired = await band($, 'terminal')
-  expect(await textsOf(expired)).toContain('expired · next message re-writes 63K tokens (~$0.51)')
-  expect((await expired.findAll({ type: 'Button' })).map(b => b.props.label)).toEqual(['Keep warm: off', 'Compact', 'Details'])
+  expect(await textsOf(expired)).toContain('expired  next message re-writes 63K tokens (~$0.51)')
+  expect(await labelsOf(expired)).toEqual(['Keep warm: off', 'Compact', 'More ▾'])
 })
 
-slow('as the room narrows the band flows onto more lines and loses nothing from 40 to 250 columns', async ($, on) => {
-  const { clock, request } = await boot($, on)
-  for (const use of THREE) await request(use)
-  await clock.advance(10 * 1000)
-
-  const widths = [...Array.from({ length: 91 }, (_, i) => 40 + i), 140, 160, 200, 250]
-  for (const columns of widths) {
-    const ui = await band($, 'terminal', columns)
-    const [root] = await ui.findAll({ type: 'Box' })
-    const text = await textsOf(ui)
-    // Every piece of the wide band is on screen, whatever line it landed on.
-    for (const part of ['59:50 1h?', '▕', '97% now · 65% session', '63K ctx', '121K read · 64K written', 'saved ~$0.20', '▁██']) {
-      expect(text, `${columns} columns: ${part}`).toContain(part)
-    }
-    expect((await ui.findAll({ type: 'Button' })).map(b => b.props.label), `${columns} columns`).toEqual(['Keep warm: off', 'Warm now', 'Details'])
-    expect(overflowing(root, columns), `${columns} columns: a row wider than the band`).toEqual([])
-    await ui.unmount()
-  }
-
-  // Wide enough, the band is one line of numbers above one of buttons (and the line another mod drew).
-  const wide = await band($, 'terminal', 200)
-  expect(rowsOf((await wide.findAll({ type: 'Box' }))[0]).length).toBe(3)
-  await wide.unmount()
-
-  // Once expired, what the next message re-writes shortens before it overflows.
-  await clock.advance(61 * MINUTE)
-  for (const columns of [40, 55, 70, 100, 200]) {
-    const ui = await band($, 'terminal', columns)
-    const [root] = await ui.findAll({ type: 'Box' })
-    expect(await textsOf(ui), `${columns} columns, expired`).toMatch(/expired.*re-writes (63K tokens|63K) \(~\$0\.51\)/)
-    expect(overflowing(root, columns), `${columns} columns, expired`).toEqual([])
-    await ui.unmount()
-  }
-})
-
-fiveMinute('the pane shows the latest break and the keep-warm pickers only when there is something to show, and its pickers choose by button', async ($, on) => {
+slow('More opens the detail in the band and Less closes it, and the choice is kept', async ($, on) => {
   const { clock, request } = await boot($, on)
   for (const use of THREE) await request(use)
   await clock.advance(5 * MINUTE)
   await request({ read: 0, written: 63_000, uncached: 20, output: 100 })
 
   for (const surface of ['terminal', 'desktop'] as const) {
-    const ui = await pane($, surface, 160)
+    const ui = await band($, surface, 200)
+    expect((await ui.find({ key: 'more' }))?.props.hotkey).toBe('m')
+    await ui.press({ key: 'more' })
     const text = await textsOf(ui)
-    // The numbers line: hit rate, requests, tokens and the money items, each labelled once.
-    for (const part of ['hit', '4 requests', 'read', 'written', 'uncached', 'saved ~$', 'writes ~$']) {
+    // The session's numbers, each labelled once, the requests and the latest break, under their labels.
+    for (const part of ['This session', '% hit', '4 requests', 'read', 'written', 'uncached', 'context', 'saved ', 'writes ~$', 'Requests', 'Last break', '63K re-written', 'prefix changed (system prompt, tools or MCP servers)']) {
       expect(text, `${surface}: ${part}`).toContain(part)
     }
-    // The latest break, with its heading and no explanation sentence.
-    expect(text).toContain('Last break')
-    expect(text).toContain('63K re-written')
-    expect(text).toContain('prefix changed (system prompt, tools or MCP servers)')
-    for (const gone of ['This session', 'Breaks', 'A ping is one short request']) expect(text, `${surface}: ${gone}`).not.toContain(gone)
-    expect((await ui.findAll({ type: 'Button' })).map(b => b.props.label)).toEqual([
-      'Warm now',
-      'Keep warm: off',
-      'Compact',
-      ...(surface === 'terminal' ? [] : ['Close']),
-    ])
-    if (surface === 'desktop') expect((await ui.findAll({ type: 'Svg' })).length).toBe(2)
-    // With keep warm off the pickers are not drawn.
+    if (surface === 'terminal') expect(text).toContain('■ read')
+    else expect((await ui.findAll({ type: 'Svg' })).length).toBe(2)
+    expect(await labelsOf(ui)).toEqual(['Keep warm: off', 'Warm now', 'Less ▴'])
+    // With keep warm off its choices are not drawn.
+    expect(await ui.find({ key: 'lead' })).toBeUndefined()
+    await ui.press({ key: 'more' })
+    expect(await textsOf(ui)).not.toContain('This session')
+    await ui.unmount()
+  }
+
+  // The detail stays open for the next session, as keep warm does.
+  await openDetail($)
+  await $.session.end({ reason: 'clear' } as never)
+  await $.classic.SessionStart({ source: 'clear' } as never)
+  await request({ read: 0, written: 60_000, uncached: 20, output: 300 })
+  expect(await textsOf(await band($, 'terminal'))).toContain('This session')
+})
+
+fiveMinute('keep warm shows its choices in the band whenever it is on, and they choose by button', async ($, on) => {
+  const { request } = await boot($, on)
+  for (const use of THREE) await request(use)
+
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await band($, surface, 160)
     expect(await ui.find({ key: 'lead' })).toBeUndefined()
 
-    // Keep warm on brings its pickers and the pings line.
+    // Keep warm on brings its choices and the pings line, the detail closed.
     await ui.press({ key: 'keep' })
     expect((await ui.find({ key: 'keep' }))?.props.label).toBe('Keep warm: on')
     expect((await ui.find({ key: 'keep' }))?.props.variant).toBe('primary')
+    expect(await textsOf(ui)).toContain('Keep warm')
     expect(await textsOf(ui)).toContain('No pings yet.')
-    // A closed picker is a button that says it opens: its arrow and a hint to click or press Enter.
+    // A closed choice is a button that says it opens: its arrow and a hint to click it.
     expect((await ui.find({ key: 'lead' }))?.props.label).toBe('Ping: automatically before expiry ▾')
     expect((await ui.find({ key: 'cap' }))?.props.label).toBe('Stop: after 3 hours idle ▾')
-    expect(await textsOf(ui)).toContain('click or Enter to change')
+    expect(await textsOf(ui)).toContain('click to change')
 
-    // Opened, it lists its options as buttons, says how to pick and offers Cancel; a pick closes it.
+    // Opened, it lists its options as buttons and offers Cancel; a pick closes it.
     await ui.press({ key: 'lead' })
-    expect(await textsOf(ui)).toContain('click one, or Tab to it and press Enter')
-    const open = (await ui.findAll({ type: 'Button' })).map(b => b.props.label)
-    expect(open.filter(l => !['Warm now', 'Keep warm: on', 'Compact', 'Close'].includes(l as string))).toEqual(['automatic', '1 minute', '2 minutes', '4 minutes', '8 minutes', 'Cancel'])
+    expect(await textsOf(ui)).toContain('Ping before expiry:')
+    const open = await labelsOf(ui)
+    expect(open.filter(l => !['Keep warm: on', 'Warm now', 'More ▾'].includes(l as string))).toEqual(['automatic', '1 minute', '2 minutes', '4 minutes', '8 minutes', 'Cancel'])
     expect((await ui.find({ key: 'lead:auto' }))?.props.variant).toBe('primary')
     await ui.press({ key: 'picker-cancel' })
     expect(await ui.find({ key: 'lead:2m' })).toBeUndefined()
@@ -547,68 +547,69 @@ fiveMinute('the pane shows the latest break and the keep-warm pickers only when 
       await ui.press({ key: `${picker}:${value}` })
     }
 
-    // Keep warm toggled from the pane and from the band, any number of times: the pickers show exactly while it is on.
-    const bandUi = await band($, surface)
+    // Toggled any number of times, by button or command, the choices show exactly while it is on.
     let isOn = true
-    for (const from of [ui, bandUi, bandUi, ui, ui, bandUi, ui]) {
-      await from.press({ key: 'keep' })
+    for (const by of ['button', 'command', 'button', 'button', 'command'] as const) {
+      if (by === 'button') await ui.press({ key: 'keep' })
+      else await (isOn ? keepWarmOff($) : keepWarmOn($))
       isOn = !isOn
       expect(Boolean(await ui.find({ key: 'lead' })), `${surface}: keep warm ${isOn ? 'on' : 'off'}`).toBe(isOn)
-      expect(Boolean(await ui.find({ key: 'cap' })), `${surface}: keep warm ${isOn ? 'on' : 'off'}`).toBe(isOn)
-      expect((await bandUi.find({ key: 'keep' }))?.props.label).toBe(`Keep warm: ${isOn ? 'on' : 'off'}`)
+      expect((await ui.find({ key: 'keep' }))?.props.label).toBe(`Keep warm: ${isOn ? 'on' : 'off'}`)
     }
     expect(isOn).toBe(false)
-    await bandUi.unmount()
     await ui.unmount()
   }
-
-  // Compact stays reachable once the cache has expired, where Warm now is no longer offered.
-  await clock.advance(10 * MINUTE)
-  const expired = await pane($, 'terminal')
-  expect((await expired.findAll({ type: 'Button' })).map(b => b.props.label)).toEqual(['Keep warm: off', 'Compact'])
-  expect(await textsOf(expired)).toContain('expired')
 })
 
-slow('the pane never draws a row wider than itself, and holds five lines where it is wide, in every state', async ($, on) => {
+slow('the band never draws a row wider than itself and loses nothing, from 40 to 250 columns, in every state', async ($, on) => {
   const { clock, request } = await boot($, on)
-  const keepWarmOff = () => $.command.run({ command: 'cache-maxxer', args: 'keep off' } as never)
-  await expectPaneFits($, 'no cache')
-  await keepWarmOn($)
-  await expectPaneFits($, 'no cache, keep warm on')
+  await openDetail($)
+  await expectBandFits($, 'no cache, open', ['No cache yet'])
+  await closeDetail($)
 
-  // Two breaks in a row: the latest on its own line with the count of the earlier one.
   for (const use of THREE) await request(use)
   await request({ read: 0, written: 63_000, uncached: 20, output: 100 })
   await request({ read: 0, written: 63_000, uncached: 20, output: 100 })
-  await expectPaneFits($, 'warm, keep warm on, two breaks')
-  await keepWarmOff()
-  await expectPaneFits($, 'warm, keep warm off, two breaks')
-
-  // The entry's length is still assumed here, and "Expiring soon" is the longest state word.
-  await clock.advance(53 * MINUTE)
-  await expectPaneFits($, 'expiring soon, keep warm off')
+  await clock.advance(10 * 1000)
+  // Closed, every piece of the first line is there at every width, whatever row it landed on.
+  await expectBandFits($, 'warm, closed', ['● 59:50', '% hit', 'Keep warm: off'])
+  await openDetail($)
+  await expectBandFits($, 'warm, open, two breaks', ['● 59:50', 'This session', '5 requests', 'Last break', 'and 1 more'])
   await keepWarmOn($)
-  await expectPaneFits($, 'expiring soon, keep warm on')
+  await expectBandFits($, 'warm, open, keep warm on', ['Ping:', 'Stop:', 'No pings yet.'])
+  const ui = await band($, 'terminal')
+  await ui.press({ key: 'cap' })
+  await ui.unmount()
+  await expectBandFits($, 'warm, open, a choice open', ['Stop when idle for:', 'never stop', 'Cancel'])
+  await keepWarmOff($)
 
-  await keepWarmOff()
-  await clock.advance(8 * MINUTE)
-  await expectPaneFits($, 'expired, keep warm off')
+  // Expiring soon says so in words as well as color.
+  await clock.advance(52 * MINUTE)
+  await expectBandFits($, 'expiring soon, open', ['expiring soon'])
+  await closeDetail($)
+  await expectBandFits($, 'expiring soon, closed', ['expiring soon'])
+
+  await clock.advance(9 * MINUTE)
+  await expectBandFits($, 'expired, closed', ['expired', 're-writes'])
+  await openDetail($)
   await keepWarmOn($)
-  await expectPaneFits($, 'expired, keep warm on')
+  await expectBandFits($, 'expired, open, keep warm on', ['expired', 'Compact', 'Ping:'])
+
+  // Wide enough, the first line holds the status and the buttons together.
+  await closeDetail($)
+  await keepWarmOff($)
+  const wide = await band($, 'terminal', 200)
+  const [root] = await wide.findAll({ type: 'Box' })
+  expect(linesOf(root)).toBe(2)
 })
 
-idleCap('the pane fits its width with pings counted and keep warm paused for idleness', async ($, on) => {
+idleCap('the band fits its width with pings counted and keep warm paused for idleness', async ($, on) => {
   const { clock, fork, request } = await boot($, on)
   await keepWarmOn($)
   for (const use of THREE) await request(use)
   await request({ read: 0, written: 63_000, uncached: 20, output: 100 })
   await clock.advance(66 * MINUTE)
   expect(fork.calls).toBeGreaterThan(5)
-  const ui = await pane($, 'terminal', 80)
-  const text = await textsOf(ui)
-  expect(text).toContain('Paused: ')
-  expect(text).toContain('pings so far')
-  await ui.unmount()
-  // Every item is showing here, so only the widest panes keep it to five lines.
-  await expectPaneFits($, 'pings counted and paused', 250)
+  await openDetail($)
+  await expectBandFits($, 'pings counted and paused', ['Paused: ', 'pings so far'])
 })

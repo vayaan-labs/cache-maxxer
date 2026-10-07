@@ -3,7 +3,7 @@ import { fmtApprox, fmtClock, fmtTokens, pct } from './format'
 import { writeCostUsd } from './pricing'
 import { ttlInfo, type TtlInfo } from './ttl'
 
-// Everything the band and the pane draw, read once per redraw.
+// Everything the band draws, read once per redraw.
 export type View = {
   cache: CacheState
   ttl: TtlInfo
@@ -17,6 +17,8 @@ export type View = {
   paused: string
   // Which keep-warm picker is open ('lead' or 'cap'), else empty; always empty while keep warm is off
   picker: Picker
+  // Whether the band shows the session's detail under its first line
+  expanded: boolean
 }
 
 export type Picker = '' | 'lead' | 'cap'
@@ -34,6 +36,7 @@ export function makeView(a: {
   pings: Pings
   paused: string
   picker: string
+  expanded: boolean
 }): View {
   const ttl = ttlInfo(a.ttlSetting, a.cache.ttlMs)
   const { now, picker, ...rest } = a
@@ -69,10 +72,7 @@ export function rewriteCost(v: View): number | null {
 export const ttlLabel = (v: View): string =>
   v.ttl.ms >= 600_000 ? (v.ttl.isKnown ? '1 hour cache' : '1 hour (assumed)') : '5 minute cache'
 
-// The same, short: the length alone, for the pane's first line when the room is tight.
-export const ttlShort = (v: View): string => (v.ttl.ms >= 600_000 ? (v.ttl.isKnown ? '1h' : '1h?') : '5m')
-
-// The pings so far, in the pane, piece by piece. A ping is a background request: it reads the cache and
+// The pings so far, in the band's keep-warm row, piece by piece. A ping is a background request: it reads the cache and
 // so restarts the entry's timer. One that rebuilt a lapsed cache is told apart from one that kept it warm.
 export function pingsItems(p: Pings): string[] {
   if (p.count === 0 && p.rebuilds === 0) return ['No pings yet.']

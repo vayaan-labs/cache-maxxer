@@ -6,7 +6,6 @@ import type { CacheSettings } from '../types'
 import { desktopBand, terminalBand, type Actions } from './band'
 import { fmtApprox, fmtTokens } from './format'
 import { applyRequest, DEFAULT_SETTINGS, EMPTY_CACHE, EMPTY_PINGS, EMPTY_TOTALS, type Pending } from './model'
-import { desktopPane, terminalPane, type PaneActions } from './pane'
 import { requestCostUsd } from './pricing'
 import { idleCapMs, leadLabel, leadMs, parseTtl, ttlInfo } from './ttl'
 import { makeView, summaryText, type View } from './view'
@@ -14,9 +13,7 @@ import { makeView, summaryText, type View } from './view'
 // Cache Maxxer shows the conversation's prompt cache: how long it has left, how well it is hitting,
 // why it broke, and (when asked) keeps it warm with a short request before it lapses.
 
-const PANE_ID = 'cache-maxxer'
 const COMMAND = 'cache-maxxer'
-const PANE = { id: PANE_ID, title: 'Cache Maxxer', focus: true, closeOnEscape: true } as const
 
 // Asks for one word so the reply costs next to nothing; the request is there to read the cache.
 const PING_PROMPT = 'Reply with exactly one word: ok. Do not use any tools.'
@@ -25,7 +22,7 @@ const TAIL_BYTES = 262_144
 const RECHECK_MS = 10 * 60_000
 const RETRY_MS = 15_000
 
-// What the band and the pane draw. A value here survives a reload of the module; /clear, /resume
+// What the band draws. A value here survives a reload of the module; /clear, /resume
 // and /branch put every one back to its default (a /clear keeps only what the cache last held).
 const cacheAtom = atom({ plugin: 'cache-maxxer', key: 'cache' } as const, EMPTY_CACHE)
 const historyAtom = atom({ plugin: 'cache-maxxer', key: 'history' } as const, [])
@@ -36,6 +33,7 @@ const pingsAtom = atom({ plugin: 'cache-maxxer', key: 'pings' } as const, EMPTY_
 const activityAtom = atom({ plugin: 'cache-maxxer', key: 'activity' } as const, 0)
 const pausedAtom = atom({ plugin: 'cache-maxxer', key: 'paused' } as const, '')
 const pickerAtom = atom({ plugin: 'cache-maxxer', key: 'picker' } as const, '')
+const expandedAtom = atom({ plugin: 'cache-maxxer', key: 'expanded' } as const, false)
 const tickAtom = atom({ plugin: 'cache-maxxer', key: 'tick' } as const, 0)
 
 type Cfg = { ttl: string; lead: string; idleCap: string }
@@ -79,6 +77,7 @@ async function viewOf($: EngineInterface, cfg: Cfg): Promise<View> {
     pings: await read($, pingsAtom),
     paused: await read($, pausedAtom),
     picker: await read($, pickerAtom),
+    expanded: await read($, expandedAtom),
   })
 }
 
@@ -280,10 +279,20 @@ async function compact($: EngineInterface) {
   }
 }
 
-// The toggle persists for new sessions; the rest start from the plugin's settings.
+// Opens the band's detail or closes it. Whether it is open persists for new sessions, as keep warm does.
+async function setExpanded($: EngineInterface, change: boolean | 'toggle') {
+  const next = await update($, expandedAtom, open => (change === 'toggle' ? !open : change))
+  await $.store.set('expanded', next)
+  return next
+}
+
+// The keep-warm toggle and whether the detail is open persist for new sessions; the rest start from
+// the plugin's settings.
 async function seedSettings($: EngineInterface, cfg: Cfg) {
   const saved = await $.store.get('keepWarm')
   await update($, settingsAtom, () => ({ ...DEFAULT_SETTINGS, keepWarm: saved === true, lead: cfg.lead, idleCap: cfg.idleCap }))
+  const expanded = await $.store.get('expanded')
+  await update($, expandedAtom, () => expanded === true)
   const now = await $.clock.now()
   await update($, activityAtom, () => now)
 }
@@ -304,15 +313,6 @@ async function resetConversation($: EngineInterface) {
 // ---- What the controls do ----
 
 function bandActions($: EngineInterface, cfg: Cfg): Actions {
-  return {
-    toggleKeepWarm: () => void setKeepWarm($, cfg, 'toggle'),
-    warmNow: () => void warmNow($, cfg),
-    compact: () => void compact($),
-    details: () => void $.ui.open(PANE),
-  }
-}
-
-function paneActions($: EngineInterface, cfg: Cfg): PaneActions {
   // Choosing an option sets it and closes the list.
   const choose = async (set: (s: CacheSettings) => CacheSettings) => {
     await update($, settingsAtom, set)
@@ -322,7 +322,7 @@ function paneActions($: EngineInterface, cfg: Cfg): PaneActions {
     toggleKeepWarm: () => void setKeepWarm($, cfg, 'toggle'),
     warmNow: () => void warmNow($, cfg),
     compact: () => void compact($),
-    close: () => void $.ui.close({ id: PANE_ID }),
+    toggleExpanded: () => void setExpanded($, 'toggle'),
     togglePicker: which => void update($, pickerAtom, open => (open === which ? '' : which)),
     setLead: value => void choose(s => ({ ...s, lead: value })),
     setIdleCap: value => void choose(s => ({ ...s, idleCap: value })),
@@ -334,7 +334,11 @@ async function runCommand($: EngineInterface, cfg: Cfg, args: string): Promise<{
   if (word === '') {
     // With nothing to draw on (a -p run) the answer is text.
     if ((await $.session.surfaces()).length === 0) return { text: summaryText(await viewOf($, cfg)) }
-    await $.ui.open(PANE)
+    await setExpanded($, true)
+    return {}
+  }
+  if (word === 'less') {
+    await setExpanded($, false)
     return {}
   }
   if (word === 'warm') return { text: pingText(await ping($, cfg)) }
@@ -342,7 +346,7 @@ async function runCommand($: EngineInterface, cfg: Cfg, args: string): Promise<{
     await setKeepWarm($, cfg, value === 'on')
     return { text: `Keep warm is ${value}.` }
   }
-  return { text: `Usage: /${COMMAND}, /${COMMAND} warm, /${COMMAND} keep on|off` }
+  return { text: `Usage: /${COMMAND} (the detail), /${COMMAND} less, /${COMMAND} warm, /${COMMAND} keep on|off` }
 }
 
 export const register: Register = (on, options) => {
@@ -358,7 +362,7 @@ export const register: Register = (on, options) => {
       await $.command.register({
         name: COMMAND,
         description: 'Show the prompt cache, or keep it warm',
-        argumentHint: '[warm | keep on|off]',
+        argumentHint: '[less | warm | keep on|off]',
         immediate: true,
       })
     } catch {
@@ -434,22 +438,14 @@ export const register: Register = (on, options) => {
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const v = await viewOf($, cfg)
-    if (e.props.hasSurvey || v.cache.startedAt === 0 || e.props.view.agentId) return next(e)
+    // Before the first request the band draws only once asked for, to say there is no cache yet.
+    if (e.props.hasSurvey || e.props.view.agentId || (v.cache.startedAt === 0 && !v.expanded)) return next(e)
     // What the mods after this one draw here stays, under the band.
     const rest = await next(e)
     const actions = bandActions($, cfg)
     const el = $.ui.resolve(e)
     if (e.surface === 'desktop') return desktopBand(el as ElementTable<'desktop'>, v, e.props.bodyColumns, actions, rest)
     return terminalBand(el as ElementTable<'terminal'>, v, e.props.bodyColumns, actions, rest)
-  })
-
-  on('ui.render', { component: 'Pane' }, async ($, e, next) => {
-    if (e.requestId !== PANE_ID) return next(e)
-    const v = await viewOf($, cfg)
-    const actions = paneActions($, cfg)
-    const el = $.ui.resolve(e)
-    if (e.surface === 'desktop') return desktopPane(el as ElementTable<'desktop'>, v, e.props.bodyColumns, actions)
-    return terminalPane(el as ElementTable<'terminal'>, v, e.props.bodyColumns, actions)
   })
 
   on('command.run', { command: COMMAND }, async ($, e) => runCommand($, cfg, e.args))

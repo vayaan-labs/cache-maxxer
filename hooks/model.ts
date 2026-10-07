@@ -53,7 +53,7 @@ export type Snapshot = {
   breaks: readonly BreakInfo[]
 }
 
-// Folds one main-conversation request into what the band and pane read. The request's own start
+// Folds one main-conversation request into what the band reads. The request's own start
 // restarts the entry's life when it read or wrote the cache.
 export function applyRequest(
   s: Snapshot,
