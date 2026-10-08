@@ -6,7 +6,8 @@ import type { CacheSettings } from '../types'
 import { desktopBand, terminalBand, type Actions } from './band'
 import { fmtApprox, fmtTokens } from './format'
 import { applyRequest, DEFAULT_SETTINGS, EMPTY_CACHE, EMPTY_PINGS, EMPTY_TOTALS, type Pending } from './model'
-import { requestCostUsd } from './pricing'
+import { isPriceTable, parsePricing, PRICING_URL, REFRESH_MS } from './live-prices'
+import { requestCostUsd, setLivePrices, type PriceEntry } from './pricing'
 import { idleCapMs, leadLabel, leadMs, parseTtl, ttlInfo } from './ttl'
 import { makeView, summaryText, type View } from './view'
 
@@ -36,7 +37,7 @@ const pickerAtom = atom({ plugin: 'cache-maxxer', key: 'picker' } as const, '')
 const expandedAtom = atom({ plugin: 'cache-maxxer', key: 'expanded' } as const, false)
 const tickAtom = atom({ plugin: 'cache-maxxer', key: 'tick' } as const, 0)
 
-type Cfg = { ttl: string; lead: string; idleCap: string }
+type Cfg = { ttl: string; lead: string; idleCap: string; livePrices: boolean }
 
 const pick = (value: unknown, allowed: readonly string[], fallback: string) =>
   typeof value === 'string' && allowed.includes(value) ? value : fallback
@@ -45,6 +46,7 @@ const readCfg = (options: PluginOptions): Cfg => ({
   ttl: pick(options.ttl, ['auto', '1h', '5m'], 'auto'),
   lead: pick(options.lead, ['auto', '1m', '2m', '4m', '8m'], 'auto'),
   idleCap: pick(options.idle_cap, ['1h', '3h', '8h', 'none'], '3h'),
+  livePrices: pick(options.live_prices, ['on', 'off'], 'on') === 'on',
 })
 
 // What the hooks share between events. A reload of the module starts it over.
@@ -270,6 +272,26 @@ async function setKeepWarm($: EngineInterface, cfg: Cfg, change: boolean | 'togg
   return next.keepWarm
 }
 
+// The price table Anthropic publishes, read at most once a day and kept in the plugin's store, so a
+// new model or a changed price is known without a new release. The last good table is used meanwhile,
+// and a page that cannot be read or does not parse leaves it as it was. Never blocks the session.
+async function refreshPrices($: EngineInterface) {
+  try {
+    const stored = (await $.store.get('prices')) as { at?: unknown; entries?: unknown } | undefined
+    const saved = stored && typeof stored.at === 'number' && isPriceTable(stored.entries) ? stored : undefined
+    if (saved) setLivePrices(saved.entries as PriceEntry[])
+    const now = await $.clock.now()
+    if (saved && now - (saved.at as number) < REFRESH_MS) return
+    const res = await $.http.fetch(PRICING_URL)
+    const entries = res.ok ? parsePricing(res.text) : null
+    if (!entries) return
+    setLivePrices(entries)
+    await $.store.set('prices', { at: now, entries })
+  } catch {
+    // The built-in table, or the last good one, stays in use
+  }
+}
+
 async function compact($: EngineInterface) {
   try {
     const r = await $.session.compact()
@@ -355,6 +377,7 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
     await seedSettings($, cfg)
+    if (cfg.livePrices) void refreshPrices($)
     // After a reload the entry may still be running, and a resumed session has writes to read the length from.
     if ((await read($, cacheAtom)).startedAt > 0) startTicker($, cfg)
     void learnTtl($, cfg)

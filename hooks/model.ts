@@ -74,7 +74,7 @@ export function applyRequest(
     brk = {
       at: r.startedAt,
       written: tokens.written,
-      costUsd: writeCostUsd(usage.model, tokens.written, r.ttlMs),
+      costUsd: writeCostUsd(usage.model, tokens.written, r.ttlMs, totalInput),
       cause: inferCause({
         gapMs: s.cache.startedAt > 0 ? r.startedAt - s.cache.startedAt : null,
         ttlMs: r.ttlMs,
@@ -94,7 +94,7 @@ export function applyRequest(
     cached: tokens.read + tokens.written,
   }
   const saved = savingsUsd(usage.model, tokens, r.ttlMs)
-  const cost = writeCostUsd(usage.model, tokens.written, r.ttlMs)
+  const cost = writeCostUsd(usage.model, tokens.written, r.ttlMs, totalInput)
   const t = s.totals
   const totals: Totals = {
     requests: t.requests + 1,

@@ -1,7 +1,9 @@
 import type { On } from 'claude-code'
 import { expect, mock, test, type Engine } from 'claude-code/testing'
 
-import { inferCause, isBreak } from '../hooks/model'
+import { isPriceTable, parsePricing } from '../hooks/live-prices'
+import { applyRequest, EMPTY_CACHE, EMPTY_TOTALS, inferCause, isBreak } from '../hooks/model'
+import { requestCostUsd, setLivePrices, writeCostUsd } from '../hooks/pricing'
 import { parseTtl } from '../hooks/ttl'
 
 const T0 = Date.parse('2026-10-04T10:00:00Z')
@@ -68,6 +70,8 @@ async function boot($: Engine, on: On, transcript: { path: string; tail: string 
   // Where the session's transcript is, as the mod finds it: one find, then the tail of the file.
   on('session.id', () => ({ value: 'session-1' }) as never)
   on('env.get', () => ({ value: undefined }) as never)
+  // The price page is never fetched in a test: the built-in table prices every request here.
+  on('http.fetch', () => ({ value: { status: 503, ok: false, headers: {}, text: '' } }) as never)
   on('process.run', (_$, e) => ({
     value: { exitCode: 0, stdout: e.argv[0] === '/usr/bin/find' ? transcript.path : transcript.tail, stderr: '' },
   }) as never)
@@ -211,6 +215,86 @@ test('the entry life is read from the newest cache write in the transcript', () 
   expect(parseTtl(`cut off mid-line {"x":\n${line(0, 9000)}\n${line(4000, 0)}\n`)).toBe(60 * MINUTE)
   expect(parseTtl(`${line(4000, 0)}\n${line(0, 9000)}\n{"type":"user"}\n`)).toBe(5 * MINUTE)
   expect(parseTtl(`${line(0, 0)}\n{"type":"user"}\n`)).toBeNull()
+})
+
+// Rows as Anthropic's pricing page prints them, links and footnote marks included.
+const PAGE = `## Model pricing
+
+| Model | Base input tokens | 5m cache writes | 1h cache writes | Cache hits and refreshes | Output tokens |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| Claude Mythos 5.1 ([limited availability](https://support.claude.com/en/articles/1)) | $10 / MTok | $12.50 / MTok | $20 / MTok | $0.25 / MTok<sup>1</sup> | $50 / MTok |
+| Claude Opus 5.5 | $4 / MTok | $5 / MTok | $8 / MTok | $0.20 / MTok<sup>2</sup> | $20 / MTok |
+| Claude Opus 4 ([retired, except on Google Cloud](https://platform.claude.com/docs/en/about-claude/model-deprecations)) | $15 / MTok | $18.75 / MTok | $30 / MTok | $1.50 / MTok | $75 / MTok |
+| Claude Haiku 5.5 (for prompts up to 100,000 tokens) | $0.10 / MTok | $0.125 / MTok | $0.20 / MTok | $0.01 / MTok | $0.50 / MTok |
+| Claude Haiku 5.5 (for prompts over 100,000 tokens) | $0.50 / MTok | $0.625 / MTok | $1 / MTok | $0.05 / MTok | $2.50 / MTok |
+| Claude Haiku 3.5 ([retired, except on Google Cloud](https://platform.claude.com/docs/en/about-claude/model-deprecations)) | $0.80 / MTok | $1 / MTok | $1.60 / MTok | $0.08 / MTok | $4 / MTok |
+
+## Batch processing
+`
+
+test("Anthropic's price table is read by column, every row named", () => {
+  const prices = new Map(parsePricing(PAGE))
+  expect([...prices.keys()].sort()).toEqual(['claude-3-5-haiku', 'claude-haiku-5-5', 'claude-mythos-5-1', 'claude-opus-4', 'claude-opus-5-5'])
+  expect(prices.get('claude-opus-5-5')).toEqual({ input: 4, write5m: 5, write1h: 8, read: 0.2, output: 20 })
+  expect(prices.get('claude-opus-4')).toEqual({ input: 15, write5m: 18.75, write1h: 30, read: 1.5, output: 75 })
+  expect(prices.get('claude-haiku-5-5')).toEqual({
+    upTo: 100_000,
+    small: { input: 0.1, write5m: 0.125, write1h: 0.2, read: 0.01, output: 0.5 },
+    large: { input: 0.5, write5m: 0.625, write1h: 1, read: 0.05, output: 2.5 },
+  })
+
+  // A page that changed its shape never replaces a good table: each of these reads as nothing.
+  const opus = '| Claude Opus 5.5 | $4 / MTok | $5 / MTok | $8 / MTok | $0.20 / MTok<sup>2</sup> | $20 / MTok |'
+  const doubts: [string, string][] = [
+    ['a column renamed', PAGE.replace('5m cache writes', '5 minute writes')],
+    ['a price that is not dollars a million', PAGE.replace(opus, opus.replace('$20 / MTok', 'contact us'))],
+    ['a cache read above its input price', PAGE.replace(opus, opus.replace('$0.20 / MTok', '$9 / MTok'))],
+    ['a model row it cannot name', PAGE.replace('Claude Opus 5.5', 'Claude Opus Preview')],
+    ['one Haiku 5.5 tier without the other', PAGE.replace(/^.*prompts over 100,000.*$/m, '')],
+    ['fewer than three models', PAGE.split('\n').filter(l => !/Claude (Mythos|Opus|Haiku 3)/.test(l)).join('\n')],
+  ]
+  for (const [name, page] of doubts) expect(parsePricing(page), name).toBeNull()
+
+  // A table kept from an earlier read is used only in the shape a read makes.
+  expect(isPriceTable(parsePricing(PAGE)), 'what a read makes').toBe(true)
+  const opusPrice = { input: 4, write5m: 5, write1h: 8, read: 0.2, output: 20 }
+  const damaged: [string, unknown][] = [
+    ['nothing saved', undefined],
+    ['an empty table', []],
+    ['an entry that is not a pair', [['claude-opus-5-5']]],
+    ['a price that is text', [['claude-opus-5-5', { ...opusPrice, read: '0.2' }]]],
+    ['a tiered price missing its larger tier', [['claude-haiku-5-5', { upTo: 100_000, small: opusPrice }]]],
+    ['a negative price', [['claude-opus-5-5', { ...opusPrice, output: -1 }]]],
+  ]
+  for (const [name, entries] of damaged) expect(isPriceTable(entries), name).toBe(false)
+})
+
+// Dollars to the billionth, so float rounding in a sum never reads as a different price.
+const usd = (v: number | null) => (v === null ? null : Math.round(v * 1e9) / 1e9)
+
+test('a request is priced at the tier its own prompt falls in, and the page wins over the built-in table', () => {
+  setLivePrices(null)
+  const haiku = 'claude-haiku-5-5'
+  // A 1 hour write of 10K tokens: 20 cents a million in a short prompt, a dollar in one past 100K.
+  expect(usd(writeCostUsd(haiku, 10_000, 60 * MINUTE, 50_000))).toBe(usd(0.002))
+  expect(usd(writeCostUsd(haiku, 10_000, 60 * MINUTE, 150_000))).toBe(usd(0.01))
+  const long = { read: 90_000, written: 10_000, uncached: 1_000, output: 1_000 }
+  expect(usd(requestCostUsd(haiku, long, 60 * MINUTE))).toBe(usd((1_000 * 0.5 + 90_000 * 0.05 + 10_000 * 1 + 1_000 * 2.5) / 1e6))
+  expect(usd(requestCostUsd('claude-opus-5-5[1m]', long, 5 * MINUTE))).toBe(usd((1_000 * 4 + 90_000 * 0.2 + 10_000 * 5 + 1_000 * 20) / 1e6))
+  expect(writeCostUsd('claude-unknown-9', 10_000, 60 * MINUTE)).toBeNull()
+
+  // The band's write cost follows the whole request's prompt, not the write alone: 30K written in a
+  // 121K prompt is a long-prompt write at a dollar a million, not 20 cents.
+  const usage = { model: haiku, input_tokens: 1_000, cache_read_input_tokens: 90_000, cache_creation_input_tokens: 30_000, output_tokens: 500 }
+  const { next } = applyRequest({ cache: EMPTY_CACHE, history: [], totals: EMPTY_TOTALS, breaks: [] },
+    { startedAt: T0, usage: usage as never, ttlMs: 60 * MINUTE }, null)
+  expect(usd(next.totals.writeCostUsd)).toBe(usd(0.03))
+
+  setLivePrices([['claude-opus-5-5', { input: 1, write5m: 1, write1h: 1, read: 1, output: 1 }]])
+  expect(writeCostUsd('claude-opus-5-5', 1_000_000, 60 * MINUTE)).toBe(1)
+  // A model the page did not list still has its built-in price.
+  expect(writeCostUsd('claude-haiku-4-5', 1_000_000, 60 * MINUTE)).toBe(2)
+  setLivePrices(null)
 })
 
 fiveMinute('a rebuilt cache is explained once, and subagent requests do not count', async ($, on) => {

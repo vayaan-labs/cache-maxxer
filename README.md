@@ -8,7 +8,7 @@ Claude Code keeps your conversation in a prompt cache, so each new message does 
 
 ## Why the cache matters
 
-While the cache is warm, each request reads your conversation at a small fraction of the normal input price. Once it expires, the next message writes the whole conversation back in. With the prices built into Cache Maxxer for Opus 5.5 ($4 per million tokens of plain input, $0.20 to read from the cache and $8 to write to an hour-long cache), a 180K token conversation costs about 4 cents to read and about $1.44 to write again after a lapse. A cache lives for either an hour or five minutes. Cache Maxxer uses your `ttl` setting if you set one, and otherwise reads the length from your session: the newest cache write in the session transcript, or the length Claude Code reports when you switch model. Until it has seen one it assumes an hour.
+While the cache is warm, each request reads your conversation at a small fraction of the normal input price. Once it expires, the next message writes the whole conversation back in. At Anthropic's prices for Opus 5.5 ($4 per million tokens of plain input, $0.20 to read from the cache and $8 to write to an hour-long cache), a 180K token conversation costs about 4 cents to read and about $1.44 to write again after a lapse. A cache lives for either an hour or five minutes. Cache Maxxer uses your `ttl` setting if you set one, and otherwise reads the length from your session: the newest cache write in the session transcript, or the length Claude Code reports when you switch model. Until it has seen one it assumes an hour.
 
 ## Know where your cache stands
 
@@ -28,7 +28,7 @@ Press Less to close it again. Whether the detail is open is remembered for new s
 
 The band reflows to the room it has instead of cutting anything off. Where the status and the buttons do not fit side by side the buttons move to a line of their own; the cache length shortens to "1h cache"; in a narrow terminal each label moves above its values. Whatever other plugins draw in the same spot stays, shown under the band. While the band has the keyboard (click it, or press ctrl+x tab), K toggles keep warm, W warms now, C compacts and M opens or closes the detail. The Desktop app draws the same band, with the countdown and the request bars as small graphics.
 
-Dollar figures are known for Opus 5.5, Sonnet 5.5 and Haiku 4.5, matched by model id. For any other model Cache Maxxer shows tokens only and never guesses a price.
+Dollar figures use the price table Anthropic publishes, matched by model id. Cache Maxxer reads it when Claude Code starts, at most once a day, so a new model or a price change shows up without an update; until that read has worked it uses a copy of the same table it ships with, which covers every current Claude model. A model priced by prompt length, such as Haiku 5.5, is priced at the rate for each request's own size. For a model in neither table Cache Maxxer shows tokens only and never guesses a price.
 
 ## See why a cache broke
 
@@ -70,12 +70,12 @@ Tested with Claude Code 2.1.289 on macOS, in the terminal. The Desktop app route
 
 ## Settings
 
-Cache Maxxer has three settings, each a choice from a short list. In a terminal, `claude plugin configure cache-maxxer@vayaan-labs` shows them. Or put them in your settings file, using the plugin's id:
+Cache Maxxer has four settings, each a choice from a short list. In a terminal, `claude plugin configure cache-maxxer@vayaan-labs` shows them. Or put them in your settings file, using the plugin's id:
 
 ```json
 {
   "pluginConfigs": {
-    "cache-maxxer@vayaan-labs": { "ttl": "1h", "lead": "auto", "idle_cap": "3h" }
+    "cache-maxxer@vayaan-labs": { "ttl": "1h", "lead": "auto", "idle_cap": "3h", "live_prices": "on" }
   }
 }
 ```
@@ -86,15 +86,17 @@ Cache Maxxer has three settings, each a choice from a short list. In a terminal,
 
 `idle_cap` is how long you can be idle before keep warm stops: 1h, 3h (the default), 8h or none.
 
+`live_prices` is whether Cache Maxxer reads Anthropic's price table once a day: `on` (the default) or `off`, which keeps the prices it shipped with.
+
 ## Privacy
 
-Cache Maxxer makes no network requests of its own and has no server, account or analytics. What leaves your machine because of it is a request Claude Code makes for you, to the same place all your messages already go. One is the keep-warm ping: Cache Maxxer asks Claude Code to send one very short request ("Reply with exactly one word: ok. Do not use any tools.") over your conversation. It sends one only when keep warm is on and the cache is about to expire, or when you press Warm now or run `/cache-maxxer warm`. It counts toward your usage like any other request. The other is the compaction you start by pressing Compact.
+Cache Maxxer has no server, account or analytics. Its one network request of its own reads Anthropic's public pricing page (`https://platform.claude.com/docs/en/about-claude/pricing.md`) when Claude Code starts, at most once a day, to learn current prices; it sends nothing about you, your session or your usage, and `live_prices` set to `off` stops it. Everything else that leaves your machine because of it is a request Claude Code makes for you, to the same place all your messages already go. One is the keep-warm ping: Cache Maxxer asks Claude Code to send one very short request ("Reply with exactly one word: ok. Do not use any tools.") over your conversation. It sends one only when keep warm is on and the cache is about to expire, or when you press Warm now or run `/cache-maxxer warm`. It counts toward your usage like any other request. The other is the compaction you start by pressing Compact.
 
 Everything else stays local, and this is all it runs or reads:
 
 - To learn the cache length, it runs `find` to locate your session's transcript under your Claude config folder (`CLAUDE_CONFIG_DIR`, or `~/.claude`) and `tail` to read at most the last 256 KiB of it, which is the whole file when the transcript is shorter than that. It looks only at the cache-write token counts in what it reads, and it only does this when `ttl` is `auto`.
 - When you press Compact, it asks Claude Code to compact the conversation, which is a request to the model.
-- It remembers the keep-warm toggle and whether the band's detail is open in the plugin's own saved data. Everything else it tracks (the numbers behind the band) lives in memory for the session.
+- It remembers the keep-warm toggle, whether the band's detail is open and the last price table it read in the plugin's own saved data. Everything else it tracks (the numbers behind the band) lives in memory for the session.
 
 ## Updating and removing
 
@@ -106,7 +108,7 @@ Update with `claude plugin marketplace update vayaan-labs` and then `claude plug
 
 **The band says "assumed".** Cache Maxxer has not yet seen how long your cache lives and is assuming an hour. It looks in your session every 15 seconds until it finds a cache write, or you can set `ttl` yourself.
 
-**No dollar figures.** Prices are built in for Opus 5.5, Sonnet 5.5 and Haiku 4.5 only. With any other model you get token counts and no dollar amounts.
+**No dollar figures.** The model is in neither Anthropic's price table nor the copy Cache Maxxer ships with, which is the case for a model released after your copy and before the daily read has worked (or with `live_prices` off). You get token counts and no dollar amounts until a read of the page lists it.
 
 **`/cache-maxxer` is missing.** Another plugin may have taken the name. The band and the buttons still work.
 

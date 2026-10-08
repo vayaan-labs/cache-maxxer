@@ -4,6 +4,8 @@ All notable changes to Cache Maxxer are listed here. The format follows [Keep a 
 
 ## [Unreleased]
 
+- Dollar figures follow Anthropic's own price table, read when Claude Code starts and at most once a day, so every current Claude model and any new one is priced without an update. Haiku 5.5 is priced at the rate for each request's prompt size. The `live_prices` setting turns the read off, and a page that does not read cleanly never replaces the last good table.
+
 ### Added
 
 - An MIT licence, a security policy that points to private vulnerability reporting, and licence, homepage, repository and keyword fields in the plugin manifest.
