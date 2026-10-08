@@ -1,5 +1,7 @@
 <p align="center">
-  <img src="assets/icon.svg" width="128" height="128" alt="Cache Maxxer icon: a green countdown ring around a dot">
+
+![Cache Maxxer icon: a green countdown ring around a dot](assets/icon.svg)
+
 </p>
 
 <h1 align="center">Cache Maxxer</h1>
@@ -20,7 +22,9 @@
 Claude Code caches your conversation so each message doesn't pay full price to re-read everything before it. That cache quietly expires after an idle spell, and your next message pays to write the whole conversation again: slower, and on a long Opus session well over a dollar. Cache Maxxer puts the countdown right above your input box, tells you why every time the cache breaks, and can keep it warm for you.
 
 <p align="center">
-  <img src="assets/band.png" alt="The Cache Maxxer band in a terminal: a green countdown at 59:47 beside a bar that drains, 1 hour cache, hit 95.33% last request and 68.19% this session, and the buttons Keep warm: off, Warm now and More.">
+
+![The Cache Maxxer band in a terminal: a green countdown at 59:47 beside a bar that drains, 1 hour cache, hit 95.33% last request and 68.19% this session, and the buttons Keep warm: off, Warm now and More.](assets/band.png)
+
 </p>
 <p align="center"><i>The band in a terminal, one line above the input box.</i></p>
 
@@ -34,18 +38,18 @@ Claude Code caches your conversation so each message doesn't pay full price to r
 - **At home in both apps.** A compact band in the terminal, and in the Claude desktop app a drawn one with a large countdown, hit-rate rings and native menus that follows your light or dark appearance and shrinks to fit a narrow window.
 
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/band-desktop-closed-dark.png">
-    <img src="assets/band-desktop-closed-light.png" width="600" alt="The Cache Maxxer band in the Claude desktop app: a large 58:16 countdown over a draining bar, 1 hour cache, Warm, a ring for each hit rate at 99.91% last request and 99.58% this session, and the buttons Keep warm: off, Warm now, More and Hide.">
-  </picture>
+
+![The Cache Maxxer band in the Claude desktop app: a large 58:16 countdown over a draining bar, 1 hour cache, Warm, a ring for each hit rate at 99.91% last request and 99.58% this session, and the buttons Keep warm: off, Warm now, More and Hide.](assets/band-desktop-closed-light.png#gh-light-mode-only)
+![The Cache Maxxer band in the Claude desktop app: a large 58:16 countdown over a draining bar, 1 hour cache, Warm, a ring for each hit rate at 99.91% last request and 99.58% this session, and the buttons Keep warm: off, Warm now, More and Hide.](assets/band-desktop-closed-dark.png#gh-dark-mode-only)
+
 </p>
 <p align="center"><i>The same band in the Claude desktop app.</i></p>
 
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/band-desktop-keep-warm-open-dark.png">
-    <img src="assets/band-desktop-keep-warm-open-light.png" width="600" alt="The desktop band opened with keep warm on: This session at 99.58% hit rate over 548 requests, 301M read, 1.3M written, about $10.06 write cost and about $1139 saved; the last 10 requests with no cache break; the last break, compacted at 22:29, 78K re-written for about $0.62; the menus Warm before expiry: automatic and Stop after idle: 3 hours with 3 warm pings, 1.5M tokens read and about $11.63 saved; and the first line with the countdown and both hit rates.">
-  </picture>
+
+![The desktop band opened with keep warm on: This session at 99.58% hit rate over 548 requests, 301M read, 1.3M written, about $10.06 write cost and about $1139 saved; the last 10 requests with no cache break; the last break, compacted at 22:29, 78K re-written for about $0.62; the menus Warm before expiry: automatic and Stop after idle: 3 hours with 3 warm pings, 1.5M tokens read and about $11.63 saved; and the first line with the countdown and both hit rates.](assets/band-desktop-keep-warm-open-light.png#gh-light-mode-only)
+![The desktop band opened with keep warm on: This session at 99.58% hit rate over 548 requests, 301M read, 1.3M written, about $10.06 write cost and about $1139 saved; the last 10 requests with no cache break; the last break, compacted at 22:29, 78K re-written for about $0.62; the menus Warm before expiry: automatic and Stop after idle: 3 hours with 3 warm pings, 1.5M tokens read and about $11.63 saved; and the first line with the countdown and both hit rates.](assets/band-desktop-keep-warm-open-dark.png#gh-dark-mode-only)
+
 </p>
 <p align="center"><i>Opened with More, keep warm on: what the session cost and saved, and what the pings saved.</i></p>
 
