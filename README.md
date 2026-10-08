@@ -40,7 +40,7 @@ Claude Code caches your conversation so each message doesn't pay full price to r
 <p align="center">
 
 ![The Cache Maxxer band in the Claude desktop app: a large 58:16 countdown over a draining bar, 1 hour cache, Warm, a ring for each hit rate at 99.91% last request and 99.58% this session, and the buttons Keep warm: off, Warm now, More and Hide.](assets/band-desktop-closed-light.png#gh-light-mode-only)
-![The Cache Maxxer band in the Claude desktop app: a large 58:16 countdown over a draining bar, 1 hour cache, Warm, a ring for each hit rate at 99.91% last request and 99.58% this session, and the buttons Keep warm: off, Warm now, More and Hide.](assets/band-desktop-closed-dark.png#gh-dark-mode-only)
+![The Cache Maxxer band in the Claude desktop app: a large 58:08 countdown over a draining bar, 1 hour cache, Warm, a ring for each hit rate at 99.91% last request and 99.58% this session, and the buttons Keep warm: off, Warm now, More and Hide.](assets/band-desktop-closed-dark.png#gh-dark-mode-only)
 
 </p>
 <p align="center"><i>The same band in the Claude desktop app.</i></p>
@@ -48,7 +48,7 @@ Claude Code caches your conversation so each message doesn't pay full price to r
 <p align="center">
 
 ![The desktop band opened with keep warm on: This session at 99.58% hit rate over 548 requests, 301M read, 1.3M written, about $10.06 write cost and about $1139 saved; the last 10 requests with no cache break; the last break, compacted at 22:29, 78K re-written for about $0.62; the menus Warm before expiry: automatic and Stop after idle: 3 hours with 3 warm pings, 1.5M tokens read and about $11.63 saved; and the first line with the countdown and both hit rates.](assets/band-desktop-keep-warm-open-light.png#gh-light-mode-only)
-![The desktop band opened with keep warm on: This session at 99.58% hit rate over 548 requests, 301M read, 1.3M written, about $10.06 write cost and about $1139 saved; the last 10 requests with no cache break; the last break, compacted at 22:29, 78K re-written for about $0.62; the menus Warm before expiry: automatic and Stop after idle: 3 hours with 3 warm pings, 1.5M tokens read and about $11.63 saved; and the first line with the countdown and both hit rates.](assets/band-desktop-keep-warm-open-dark.png#gh-dark-mode-only)
+![The desktop band opened with keep warm on: This session at 99.58% hit rate over 547 requests, 300.3M read, 1.3M written, about $10.05 write cost and about $1136 saved; the last 10 requests with no cache break; the last break, compacted at 22:29, 78K re-written for about $0.62; the menus Warm before expiry: automatic and Stop after idle: 3 hours with 3 warm pings, 1.5M tokens read and about $11.63 saved; and the first line with the countdown and both hit rates.](assets/band-desktop-keep-warm-open-dark.png#gh-dark-mode-only)
 
 </p>
 <p align="center"><i>Opened with More, keep warm on: what the session cost and saved, and what the pings saved.</i></p>

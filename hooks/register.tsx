@@ -212,7 +212,7 @@ async function tick($: EngineInterface, cfg: Cfg) {
   if (!result.ok) {
     rt.skippedFor = cache.startedAt
     await notify($, `Keep warm skipped: ${result.reason}`)
-  } else if (result.hasLapsed) {
+  } else {
     await notify($, pingText(result))
   }
 }
@@ -401,7 +401,10 @@ function bandActions($: EngineInterface, cfg: Cfg): Actions {
 }
 
 async function runCommand($: EngineInterface, cfg: Cfg, args: string): Promise<{ text: string } | Record<string, never>> {
-  const [word = '', value = ''] = args.trim().split(/\s+/)
+  const [word = '', value = '', ...extra] = args.trim().split(/\s+/)
+  const usage = { text: `Usage: /${COMMAND} (the detail), /${COMMAND} more|less, /${COMMAND} hide|show, /${COMMAND} warm, /${COMMAND} keep on|off` }
+  // A word the command does not take after an action is a mistake to say, never something to act on.
+  if (extra.length > 0 || (value !== '' && word !== 'keep')) return usage
   if (word === '') {
     // With nothing to draw on (a -p run) the answer is text.
     if ((await $.session.surfaces()).length === 0) return { text: summaryText(await viewOf($, cfg)) }
@@ -423,7 +426,7 @@ async function runCommand($: EngineInterface, cfg: Cfg, args: string): Promise<{
     await setKeepWarm($, cfg, value === 'on')
     return { text: `Keep warm is ${value}.` }
   }
-  return { text: `Usage: /${COMMAND} (the detail), /${COMMAND} more|less, /${COMMAND} hide|show, /${COMMAND} warm, /${COMMAND} keep on|off` }
+  return usage
 }
 
 export const register: Register = (on, options) => {

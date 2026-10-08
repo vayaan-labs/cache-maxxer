@@ -328,6 +328,8 @@ function button(el: Desktop, b: ButtonSpec) {
 // app uses. Every piece, the separator dot included, is its own element with the same layout gap on
 // each side, and the app centres them all on one line.
 const CHIP_DOT = 10
+// How wide a notice under the chip may run before its words wrap.
+const CHIP_NOTICE_WIDTH = 360
 
 function chip(el: Desktop, v: View, a: Actions, rest: JSX.Element) {
   const { Box, Button, Svg, Text } = el
@@ -336,6 +338,8 @@ function chip(el: Desktop, v: View, a: Actions, rest: JSX.Element) {
   const lead = !hasCache ? 'Cache Maxxer' : !live ? 'Cache expired' : stateWord(v) === 'Warm' ? 'Cache warm' : 'Cache expiring'
   const tail = !hasCache ? ['no cache yet'] : live ? [fmtClock(v.leftMs, v.ttl.ms), 'left'] : []
   const color = live ? TONE_VAR[stateTone(v)] : 'var(--muted)'
+  // A notice still says itself while the band is tucked away, under the chip, as it would in the band.
+  const notice = v.notice !== '' ? noticePiece(v.notice, CHIP_NOTICE_WIDTH) : null
   const dot = `<circle cx="${CHIP_DOT / 2}" cy="${CHIP_DOT / 2}" r="${CHIP_DOT / 2 - 0.5}" fill="${color}"/>`
   return (
     <Box flexDirection="column">
@@ -356,6 +360,7 @@ function chip(el: Desktop, v: View, a: Actions, rest: JSX.Element) {
         ))}
         <Button key="show" label="Show" hotkey="h" onPress={a.show} />
       </Box>
+      {notice ? <Svg key="chip-notice" source={svg(notice.width, notice.height, notice.body)} alt={notice.alt} width={notice.width} /> : null}
       {rest}
     </Box>
   )

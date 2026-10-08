@@ -392,7 +392,8 @@ fiveMinute('keep warm pings once at the lead time and restarts the entry', async
   expect(await textsOf(ui)).not.toContain('warm ping')
   await ui.press({ key: 'more' })
   expect(await textsOf(ui)).toMatch(/1 warm ping · \d+K tokens read · cost saved ~\$\d+\.\d\d/)
-  expect(toasts).toEqual([])
+  // And the ping says what it did, as Warm now does.
+  expect(toasts).toEqual([expect.stringMatching(/^Cache warmed · \d+K tokens read · cost saved ~\$/)])
 })
 
 fiveMinute('a ping that finds the cache already gone says it rebuilt it and does not count as keeping it warm', async ($, on) => {
@@ -623,7 +624,7 @@ slow('closed, the band is one line: the countdown, the cache length, the hit rat
 })
 
 slow('the Desktop band hides to a chip and comes back, and the choice is kept', async ($, on) => {
-  const { request } = await boot($, on)
+  const { request, surfaces, toasts, clock } = await boot($, on)
   for (const use of THREE) await request(use)
 
   const desktop = await band($, 'desktop', 200)
@@ -650,6 +651,23 @@ slow('the Desktop band hides to a chip and comes back, and the choice is kept', 
   // /cache-maxxer more brings it back with the detail open, as /cache-maxxer on its own does.
   await $.command.run({ command: 'cache-maxxer', args: 'more' } as never)
   expect(await labelsOf(desktop)).toEqual(['Keep warm: off', 'Warm now', 'Less ▾', 'Hide'])
+
+  // Tucked away, a notice still says itself, under the chip, for a while, and never as a pop-up.
+  surfaces.splice(0, surfaces.length, 'desktop')
+  await desktop.press({ key: 'hide' })
+  const before = toasts.length
+  await request({ read: 0, written: 60_000, uncached: 20, output: 300 })
+  expect((await altsOf(desktop)).map(d => d.alt)).toContainEqual(expect.stringMatching(/^Cache rebuilt · /))
+  expect(toasts).toHaveLength(before)
+  await clock.advance(9000)
+  expect((await altsOf(desktop)).map(d => d.alt)).toEqual(['Warm'])
+
+  // A word the command does not take is answered with the usage line and changes nothing.
+  for (const args of ['more x', 'less x', 'hide x', 'show x', 'warm x', 'keep on x', 'keep off x', 'keep maybe']) {
+    const answer = await $.command.run({ command: 'cache-maxxer', args } as never)
+    expect(answer).toEqual({ text: expect.stringMatching(/^Usage: \/cache-maxxer /) })
+  }
+  expect(await labelsOf(desktop)).toEqual(['Show'])
 })
 
 slow('More opens the detail in the band and Less closes it, and the choice is kept', async ($, on) => {
