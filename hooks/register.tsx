@@ -526,18 +526,5 @@ export const register: Register = (on, options) => {
     return terminalBand(el as ElementTable<'terminal'>, v, e.props.bodyColumns, actions, rest)
   })
 
-  // Hide and Show act on the press itself, by the button's key, as well as through the closure the
-  // drawing carries: the countdown redraws the band each second, and a press that lands while the
-  // drawing is being replaced still reaches its key. Both set the same value, so running twice is
-  // the same as once.
-  on('ui.press', { plugin: 'cache-maxxer', element: 'hide' }, async ($, e, next) => {
-    await setHidden($, true)
-    return next(e)
-  })
-  on('ui.press', { plugin: 'cache-maxxer', element: 'show' }, async ($, e, next) => {
-    await setHidden($, false)
-    return next(e)
-  })
-
   on('command.run', { command: COMMAND }, async ($, e) => runCommand($, cfg, e.args))
 }

@@ -1,7 +1,7 @@
 // Dollars per million tokens. The table Anthropic publishes is read when Claude Code starts
 // (live-prices.ts), so a new model or a changed price needs no new release of this plugin; until that
 // has worked, the table below stands in, copied from the same page
-// (https://platform.claude.com/docs/en/about-claude/pricing, read 2026-10-08). A model in neither
+// (https://platform.claude.com/docs/en/about-claude/pricing). A model in neither
 // has no price, and nothing here guesses one.
 export type Price = { input: number; write5m: number; write1h: number; read: number; output: number }
 

@@ -217,7 +217,7 @@ const RECENT = 10
 
 // The last ten requests as ten places, filled from the left as requests arrive: a mark each, red
 // where the cache read dropped, under a heading that counts the breaks. An image like the other
-// drawings, so it follows the appearance and does not reload as the countdown redraws.
+// drawings, so it follows the appearance.
 function recentStrip(v: View): Piece {
   const shown = v.history.slice(-RECENT)
   const breaks = shown.filter(r => r.isBreak).length
