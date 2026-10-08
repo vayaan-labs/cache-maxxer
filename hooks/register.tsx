@@ -8,7 +8,7 @@ import { desktopBand } from './desktop'
 import { fmtApprox, fmtTokens } from './format'
 import { applyRequest, DEFAULT_SETTINGS, EMPTY_CACHE, EMPTY_PINGS, EMPTY_TOTALS, type Pending } from './model'
 import { isPriceTable, parsePricing, PRICING_URL, REFRESH_MS } from './live-prices'
-import { requestCostUsd, setLivePrices, type PriceEntry } from './pricing'
+import { keptWarmUsd, requestCostUsd, setLivePrices, type PriceEntry } from './pricing'
 import { idleCapMs, leadLabel, leadMs, parseTtl, ttlInfo } from './ttl'
 import { makeView, summaryText, type View } from './view'
 
@@ -41,7 +41,7 @@ const pingingAtom = atom({ plugin: 'cache-maxxer', key: 'pinging' } as const, fa
 const noticeAtom = atom({ plugin: 'cache-maxxer', key: 'notice' } as const, { text: '', until: 0 })
 const hiddenAtom = atom({ plugin: 'cache-maxxer', key: 'hidden' } as const, false)
 
-// How long the Desktop band says what a Warm now did, beside the app's own notice.
+// How long the Desktop band shows a notice.
 const NOTICE_MS = 8000
 
 type Cfg = { ttl: string; lead: string; idleCap: string; livePrices: boolean }
@@ -95,6 +95,21 @@ async function viewOf($: EngineInterface, cfg: Cfg): Promise<View> {
   })
 }
 
+// ---- Telling the person ----
+
+// What Cache Maxxer has to say goes where the person is looking. The Desktop app stacks a plugin's
+// notices at its window's corner, away from this session's pane in a split, so there the band says
+// it for a few seconds instead; every other surface, the terminal included, gets the notice.
+async function notify($: EngineInterface, text: string) {
+  const surfaces = await $.session.surfaces()
+  if (surfaces.length === 0 || surfaces.some(s => s !== 'desktop')) $.ui.toast(text)
+  if (!surfaces.includes('desktop')) return
+  const until = (await $.clock.now()) + NOTICE_MS
+  await update($, noticeAtom, () => ({ text, until }))
+  // The countdown's ticks redraw the band; with no cache ticking, one more redraw takes the line away.
+  $.clock.after(NOTICE_MS, () => void update($, tickAtom, t => t + 1))
+}
+
 // ---- The cache's life ----
 
 // Folds a main-conversation request into the state, and says so when it rebuilt the cache.
@@ -121,7 +136,7 @@ async function noteRequest($: EngineInterface, cfg: Cfg, startedAt: number, usag
   // A request that wrote may have put its split in the transcript: look again at the next tick.
   if (usage.cache_creation_input_tokens > 0) rt.lookup.at = 0
   startTicker($, cfg)
-  if (brk) $.ui.toast(`Cache rebuilt · ${fmtTokens(brk.written)} tokens re-written · ${brk.cause}`)
+  if (brk) await notify($, `Cache rebuilt · ${fmtTokens(brk.written)} tokens re-written · ${brk.cause}`)
 }
 
 // Reads how long an entry lives from the newest cache write in the session transcript. The transcript
@@ -183,7 +198,7 @@ async function tick($: EngineInterface, cfg: Cfg) {
   if (!settings.keepWarm) {
     if (rt.warnedFor !== cache.startedAt) {
       rt.warnedFor = cache.startedAt
-      $.ui.toast(`Cache expires in ${leadLabel(lead)} · Warm now to keep it`)
+      await notify($, `Cache expires in ${leadLabel(lead)} · Warm now to keep it`)
     }
     return
   }
@@ -196,14 +211,17 @@ async function tick($: EngineInterface, cfg: Cfg) {
   const result = await ping($, cfg)
   if (!result.ok) {
     rt.skippedFor = cache.startedAt
-    $.ui.toast(`Keep warm skipped: ${result.reason}`)
+    await notify($, `Keep warm skipped: ${result.reason}`)
   } else if (result.hasLapsed) {
-    $.ui.toast(pingText(result))
+    await notify($, pingText(result))
   }
 }
 
+// Why a ping did not go out while Claude is replying: a turn reads the cache itself.
+const BUSY = 'Claude is working'
+
 type PingResult =
-  | { ok: true; read: number; written: number; costUsd: number | null; hasLapsed: boolean }
+  | { ok: true; read: number; written: number; costUsd: number | null; savedUsd: number | null; hasLapsed: boolean }
   | { ok: false; reason: string }
 
 // One short request over the conversation. Its cache read restarts the entry's life from the
@@ -212,7 +230,7 @@ type PingResult =
 // that kept it warm.
 async function ping($: EngineInterface, cfg: Cfg): Promise<PingResult> {
   if (rt.isPinging) return { ok: false, reason: 'a ping is already running' }
-  if (rt.isTurnRunning) return { ok: false, reason: 'Claude is working' }
+  if (rt.isTurnRunning) return { ok: false, reason: BUSY }
   const cache = await read($, cacheAtom)
   const startedAt = await $.clock.now()
   const ttl = ttlInfo(cfg.ttl, cache.ttlMs).ms
@@ -247,7 +265,8 @@ async function ping($: EngineInterface, cfg: Cfg): Promise<PingResult> {
       isPriced: p.isPriced || costUsd !== null,
     }))
     startTicker($, cfg)
-    return { ok: true, read: usage.cache_read_input_tokens, written: usage.cache_creation_input_tokens, costUsd, hasLapsed }
+    const savedUsd = keptWarmUsd(model, usage.cache_read_input_tokens, ttl)
+    return { ok: true, read: usage.cache_read_input_tokens, written: usage.cache_creation_input_tokens, costUsd, savedUsd, hasLapsed }
   } catch (error) {
     return { ok: false, reason: error instanceof Error ? error.message : String(error) }
   } finally {
@@ -256,27 +275,24 @@ async function ping($: EngineInterface, cfg: Cfg): Promise<PingResult> {
   }
 }
 
-// What the person is told about a ping, in plain words: a background request went out, what it read
-// from the cache, and that the cache's timer started again. A rebuild is named as one.
+// What the person is told about a ping, in plain words. A ping that kept the cache warm says what it
+// read and what that saved, the same as the keep-warm row: those tokens at the write price less the
+// read price. A rebuild is named as one, with what it cost.
 const pingText = (r: PingResult) => {
+  // A turn reads the cache on its own, so a press mid-turn has nothing to do, and says so lightly.
+  if (!r.ok && r.reason === BUSY) return 'Claude is working bro. No point warming cache 😎'
   if (!r.ok) return `Could not warm the cache: ${r.reason}`
-  const cost = r.costUsd === null ? '' : ` · ${fmtApprox(r.costUsd)}`
-  return r.hasLapsed
-    ? `The cache had already expired, so the background request rebuilt it · ${fmtTokens(r.written)} tokens written, timer restarted${cost}`
-    : `Cache kept warm · a background request read ${fmtTokens(r.read)} tokens from it, so the timer restarted${cost}`
+  if (r.hasLapsed) {
+    const cost = r.costUsd === null ? '' : ` · ${fmtApprox(r.costUsd)}`
+    return `The cache had already expired, so the background request rebuilt it · ${fmtTokens(r.written)} tokens written, timer restarted${cost}`
+  }
+  return `Cache warmed · ${fmtTokens(r.read)} tokens read${r.savedUsd === null ? '' : ` · cost saved ${fmtApprox(r.savedUsd)}`}`
 }
 
-// A press while a ping is on its way does nothing: the button already says Warming…. The result is
-// a notice, and for a few seconds a line in the band too, since the Desktop shows its notices at the
-// window's edge, away from the band that was pressed.
+// A press while a ping is on its way does nothing: the button already says Warming….
 async function warmNow($: EngineInterface, cfg: Cfg) {
   if (rt.isPinging) return
-  const text = pingText(await ping($, cfg))
-  $.ui.toast(text)
-  const until = (await $.clock.now()) + NOTICE_MS
-  await update($, noticeAtom, () => ({ text, until }))
-  // The countdown's ticks redraw the band; with no cache ticking, one more redraw takes the line away.
-  $.clock.after(NOTICE_MS, () => void update($, tickAtom, t => t + 1))
+  await notify($, pingText(await ping($, cfg)))
 }
 
 // The one place Keep warm changes, whichever button or command asks. A toggle flips the setting
@@ -318,9 +334,9 @@ async function refreshPrices($: EngineInterface) {
 async function compact($: EngineInterface) {
   try {
     const r = await $.session.compact()
-    if (r.skip) $.ui.toast(`Compact skipped: ${r.skip}`)
+    if (r.skip) await notify($, `Compact skipped: ${r.skip}`)
   } catch (error) {
-    $.ui.toast(error instanceof Error ? error.message : String(error))
+    await notify($, error instanceof Error ? error.message : String(error))
   }
 }
 

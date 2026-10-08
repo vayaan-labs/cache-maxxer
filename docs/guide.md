@@ -22,10 +22,9 @@ Press More, or run `/cache-maxxer`, and the band opens upward, keeping its first
 
 Press Less to close it. Whether the detail is open is remembered for new sessions.
 
-
 The band reflows to the room it has instead of cutting anything off. In a narrower terminal the rates read "request 99.86% · session 94.01%" and the cache length "1h cache"; where the status and the buttons cannot share a line the buttons move to their own, and in a very narrow terminal each label moves above its values. Whatever other plugins draw in the same spot stays, under the band. While the band has the keyboard (click it, or press ctrl+x tab), K toggles keep warm, W warms now, C compacts and M opens or closes the detail.
 
-In the Claude desktop app the band is drawn for a window: the countdown as a large numeral over a bar that drains, each hit rate with a ring, the session's numbers as tiles, the last 10 requests as a row of marks, and the keep-warm choices as the app's own menus. It follows the system's light or dark appearance and frames itself like the input box. In a window too narrow for it, its drawn rows shrink together, text and marks alike, rather than wrapping; the buttons and menus keep their size and wrap. A ping takes a few seconds to come back over a long conversation, so Warm now reads Warming… until it does, and the band says what it did for a few seconds after. Hide (or H) tucks it away to a small chip with the countdown and a Show button; it stays tucked away for new sessions until you press Show or run `/cache-maxxer`.
+In the Claude desktop app the band is drawn for a window: the countdown as a large numeral over a bar that drains, each hit rate with a ring, the session's numbers as tiles, the last 10 requests as a row of marks, and the keep-warm choices as the app's own menus. It follows the system's light or dark appearance and frames itself like the input box. In a window too narrow for it, its drawn rows shrink together, text and marks alike, rather than wrapping; the buttons and menus keep their size and wrap. A ping takes a few seconds to come back over a long conversation, so Warm now reads Warming… until it does. The app shows a plugin's notices at its window's corner, away from this session in a split, so here every Cache Maxxer notice, such as what a ping did or that the cache was rebuilt, appears in the band for a few seconds instead. Hide (or H) tucks it away to a small chip with the countdown and a Show button; it stays tucked away for new sessions until you press Show or run `/cache-maxxer`.
 
 | | Light | Dark |
 |---|---|---|
@@ -49,14 +48,13 @@ With keep warm off you also get one notice when the cache is about to run out: "
 
 ## Keep warm
 
-Keep warm is off by default. When it is on, your session is idle and the cache is about to run out, Cache Maxxer sends one very short request over your conversation asking for a one-word reply. That request reads the cached context, which resets the cache's timer. It sends one at a time, never while Claude is working, and does not retry in a loop if one fails: it tells you why and leaves that expiry alone. Warm now does the same once, when you ask. Either way you get a notice such as "Cache kept warm · a background request read 57K tokens from it, so the timer restarted".
+Keep warm is off by default. When it is on, your session is idle and the cache is about to run out, Cache Maxxer sends one very short request over your conversation asking for a one-word reply. That request reads the cached context, which resets the cache's timer. It sends one at a time, never while Claude is working, and does not retry in a loop if one fails: it tells you why and leaves that expiry alone. Warm now does the same once, when you ask. Either way you get a notice such as "Cache warmed · 180K tokens read · cost saved ~$1.40": what the ping read, and what that saved over re-writing it, those tokens at the cache-write price less the cache-read price.
 
 A ping costs about the size of your context times the cache-read price. For a 180K token Opus 5.5 conversation that is a few cents, against well over a dollar to re-write the same context after a lapse. With a five-minute cache it pings every few minutes, so it adds up much faster than with an hour cache. If a ping finds the cache had already lapsed, it rebuilt the cache instead: the notice says so with what was written and what it cost, and the keep-warm row counts it as a rebuild.
 
 Keep warm stops once you have not sent anything for the idle cap (three hours unless you change it), and the band says so, so a session you walked away from does not keep spending. It starts again with your next message.
 
 While keep warm is on, the band shows its own row above the first line with two choices as buttons: how long before expiry to ping, and when to stop after you have been idle, such as "Warm before expiry: automatic ▴". Click one and its options open directly above it, one per line, the current one highlighted; pick one, or click the choice again to close the list unchanged. Where room is short the choices use shorter names, such as "Warm: automatic ▴". Once you press More the row also shows the warm pings so far, the tokens they read and what they saved: those tokens at the cache-write price less the cache-read price they paid instead.
-
 
 ## The command
 
@@ -67,7 +65,7 @@ While keep warm is on, the band shows its own row above the first line with two 
 - `/cache-maxxer warm` sends one ping.
 - `/cache-maxxer keep on` and `/cache-maxxer keep off` set keep warm, which is remembered for new sessions.
 
-They run straight away, even while Claude is working. A ping never goes out during a turn, so `/cache-maxxer warm` then tells you Claude is working and sends nothing.
+They run straight away, even while Claude is working. A ping never goes out during a turn, which reads the cache itself, so `/cache-maxxer warm` then says Claude is working and sends nothing.
 
 ## Settings
 

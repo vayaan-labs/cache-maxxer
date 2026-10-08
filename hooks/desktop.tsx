@@ -290,6 +290,20 @@ function keepWarmNotes(v: View): Piece | null {
   return { body: `<text class="muted" x="0" y="13" font-size="12">${esc(text)}</text>`, width: Math.ceil(textInk(text, 12, 400)) + 1, height: 21, alt: text }
 }
 
+// A notice, drawn like the rows so it shrinks with them, its words wrapped to the rows' width so a
+// long one never widens the band.
+function noticePiece(text: string, width: number): Piece {
+  const lines: string[] = []
+  for (const word of text.split(' ')) {
+    const last = lines[lines.length - 1]
+    if (last !== undefined && textInk(`${last} ${word}`, 12, 400) <= width) lines[lines.length - 1] = `${last} ${word}`
+    else lines.push(word)
+  }
+  const STEP = 16
+  const body = lines.map((l, i) => `<text class="muted" x="0" y="${13 + i * STEP}" font-size="12">${esc(l)}</text>`).join('')
+  return { body, width: Math.ceil(Math.max(...lines.map(l => textInk(l, 12, 400)))) + 1, height: 18 + (lines.length - 1) * STEP, alt: text }
+}
+
 // ---- The band ----
 
 function button(el: Desktop, b: ButtonSpec) {
@@ -362,7 +376,7 @@ function beside(a: Piece, b: Piece | null, gap: number): Piece {
 // at all is stretched to fill the band instead. The buttons and the keep-warm menus are the app's own
 // and sit beside or under the drawings where there is room.
 export function desktopBand(el: Desktop, v: View, a: Actions, rest: JSX.Element) {
-  const { Box, Svg, Text } = el
+  const { Box, Svg } = el
   if (v.hidden) return chip(el, v, a, rest)
   const clock = instrument(v)
   const line = beside(clock, figures(v, GAP - (clock.width - clock.inkEnd)), 0)
@@ -373,6 +387,7 @@ export function desktopBand(el: Desktop, v: View, a: Actions, rest: JSX.Element)
   const rows = [line, ...(v.expanded ? [sessionTiles(v)] : []), ...(requests ? [requests] : []), ...(notes ? [notes] : [])]
   const W = Math.ceil(Math.max(...rows.map(r => r.width)))
   const draw = (key: string, p: Piece) => <Svg key={key} source={svg(W, p.height, p.body)} alt={p.alt} width={W} />
+  const notice = v.notice !== '' ? noticePiece(v.notice, W) : null
   // Hide sits with the band's own buttons, after More.
   const buttons: ButtonSpec[] = [...mainButtons(v, a), { key: 'hide', label: 'Hide', isPrimary: false, hotkey: 'h', press: a.hide }]
   const main = (
@@ -405,11 +420,7 @@ export function desktopBand(el: Desktop, v: View, a: Actions, rest: JSX.Element)
       <Box flexDirection="column" borderStyle="round" borderColor="promptBorder" paddingX={1} rowGap={1}>
         {above}
         {bottom ?? main}
-        {v.notice !== '' ? (
-          <Text key="notice" color="inactive">
-            {v.notice}
-          </Text>
-        ) : null}
+        {notice ? draw('notice', notice) : null}
       </Box>
       {rest}
     </Box>

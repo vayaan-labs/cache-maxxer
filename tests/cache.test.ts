@@ -80,7 +80,9 @@ async function boot($: Engine, on: On, transcript: { path: string; tail: string 
   on('session.end', () => ({ sessionId: 'session-1' }) as never)
   on('session.start', () => ({ cwd: '/work' }))
   on('command.register', () => ({ value: undefined }) as never)
-  on('session.surfaces', () => ({ value: ['terminal'] }) as never)
+  // Where the session draws; a test moves it to the Desktop.
+  const surfaces: string[] = ['terminal']
+  on('session.surfaces', () => ({ value: [...surfaces] }) as never)
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
 
   const request = async (use: Use, extra: Record<string, unknown> = {}) => {
@@ -89,9 +91,8 @@ async function boot($: Engine, on: On, transcript: { path: string; tail: string 
     for await (const chunk of step) void chunk
     await step.result
   }
-  return { clock, toasts, fork, request }
+  return { clock, toasts, fork, request, surfaces }
 }
-
 
 // The command, as the person types it.
 const keepWarmOn = ($: Engine) => $.command.run({ command: 'cache-maxxer', args: 'keep on' } as never)
@@ -478,18 +479,19 @@ fiveMinute('warn once with keep warm off, and Warm now pings once on demand', as
   expect((await ui.find({ key: 'warm' }))?.props.hotkey).toBe('w')
   await ui.press({ key: 'warm' })
   expect(fork.calls).toBe(1)
-  expect(toasts[1]).toBe('Cache kept warm · a background request read 61K tokens from it, so the timer restarted · ~$0.01')
+  // What it saved: 61K tokens at the 5 minute write price, $5 a million, less the $0.20 read price.
+  expect(toasts[1]).toBe('Cache warmed · 61K tokens read · cost saved ~$0.29')
 })
 
 fiveMinute('Warm now does nothing while a turn runs, and never pings twice at once', async ($, on) => {
-  const { clock, toasts, fork, request } = await boot($, on)
+  const { clock, toasts, fork, request, surfaces } = await boot($, on)
   await request({ read: 0, written: 60_000, uncached: 30, output: 100 })
   const ui = await band($, 'terminal')
 
   await $.turn.start({ text: 'go on', turnId: 't2' })
   await ui.press({ key: 'warm' })
   expect(fork.calls).toBe(0)
-  expect(toasts).toEqual(['Could not warm the cache: Claude is working'])
+  expect(toasts).toEqual(['Claude is working bro. No point warming cache 😎'])
   await $.turn.complete({ answer: 'done', durationMs: 1000, isAborted: false, turnId: 't2', reason: 'answer', usage: null } as never)
 
   // While a ping is on its way the button says so, and a second press makes no second request and
@@ -506,13 +508,23 @@ fiveMinute('Warm now does nothing while a turn runs, and never pings twice at on
   await clock.advance(5000)
   await Promise.all([first, second])
   expect(fork.calls).toBe(1)
-  expect(toasts.slice(1)).toEqual([expect.stringMatching(/^Cache kept warm · a background request read 61K tokens from it, so the timer restarted/)])
+  expect(toasts.slice(1)).toEqual([expect.stringMatching(/^Cache warmed · 61K tokens read/)])
   expect((await ui.find({ key: 'warm' }))?.props.label).toBe('Warm now')
-  // The Desktop shows its notices at the window's edge, so its band says what happened too, for a while.
-  expect(await textsOf(desktop)).toContain('Cache kept warm · a background request read 61K tokens')
-  expect(await textsOf(ui)).not.toContain('Cache kept warm')
+  // In a terminal the result is a notice, and the band carries no line of its own.
+  expect(await textsOf(ui)).not.toContain('Cache warmed')
+
+  // The Desktop stacks notices at its window's corner, away from a split's pane, so there the band
+  // says it instead, for a while, and no notice goes up.
+  surfaces.splice(0, surfaces.length, 'desktop')
+  const desk = desktop.press({ key: 'warm' })
+  await clock.advance(5000)
+  await desk
+  expect(fork.calls).toBe(2)
+  expect(toasts).toHaveLength(2)
+  // Drawn like the band's rows, so it shrinks with them.
+  expect((await altsOf(desktop)).map(d => d.alt)).toContain('Cache warmed · 61K tokens read · cost saved ~$0.29')
   await clock.advance(9000)
-  expect(await textsOf(desktop)).not.toContain('Cache kept warm')
+  expect(await readableOf(desktop)).not.toContain('Cache warmed')
 })
 
 slow('auto learns the entry life once the transcript holds the write, though it did not when the turn ended', async ($, on) => {
