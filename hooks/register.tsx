@@ -413,8 +413,9 @@ async function runCommand($: EngineInterface, cfg: Cfg, args: string): Promise<{
     await setHidden($, word === 'hide')
     return {}
   }
-  if (word === 'less') {
-    await setExpanded($, false)
+  if (word === 'less' || word === 'more') {
+    if (word === 'more') await setHidden($, false)
+    await setExpanded($, word === 'more')
     return {}
   }
   if (word === 'warm') return { text: pingText(await ping($, cfg)) }
@@ -422,7 +423,7 @@ async function runCommand($: EngineInterface, cfg: Cfg, args: string): Promise<{
     await setKeepWarm($, cfg, value === 'on')
     return { text: `Keep warm is ${value}.` }
   }
-  return { text: `Usage: /${COMMAND} (the detail), /${COMMAND} less, /${COMMAND} hide|show, /${COMMAND} warm, /${COMMAND} keep on|off` }
+  return { text: `Usage: /${COMMAND} (the detail), /${COMMAND} more|less, /${COMMAND} hide|show, /${COMMAND} warm, /${COMMAND} keep on|off` }
 }
 
 export const register: Register = (on, options) => {
@@ -439,7 +440,7 @@ export const register: Register = (on, options) => {
       await $.command.register({
         name: COMMAND,
         description: 'Show the prompt cache, or keep it warm',
-        argumentHint: '[less | hide | show | warm | keep on|off]',
+        argumentHint: '[more | less | hide | show | warm | keep on|off]',
         immediate: true,
       })
     } catch {

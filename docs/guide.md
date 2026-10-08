@@ -60,7 +60,7 @@ While keep warm is on, the band shows its own row above the first line with two 
 
 `/cache-maxxer` opens the band's detail (and shows the band before your first message, to say there is no cache yet), or prints a one-line summary where nothing can be drawn, such as a `claude -p` run.
 
-- `/cache-maxxer less` closes the detail.
+- `/cache-maxxer more` opens the detail and `/cache-maxxer less` closes it.
 - `/cache-maxxer hide` and `/cache-maxxer show` tuck the desktop app's band away to its chip and bring it back. `/cache-maxxer` on its own brings it back too, with the detail open.
 - `/cache-maxxer warm` sends one ping.
 - `/cache-maxxer keep on` and `/cache-maxxer keep off` set keep warm, which is remembered for new sessions.
@@ -102,6 +102,8 @@ Then restart Claude Code. To remove it, run `claude plugin uninstall cache-maxxe
 ## Troubleshooting
 
 **No band.** It appears once your conversation has a cache, which is after the first reply, and only while the plugin is enabled (`claude plugin list` shows it). If Claude Code was open when you installed, run `/reload-plugins`. If it still does not appear, update Claude Code to 2.1.289 or later.
+
+**No band in a split view.** The desktop app draws a plugin's band only in the leftmost chat of a split, so a chat in another pane shows none. Move the chat to the left, or open it in its own window, and the band is there. Anthropic tracks it as [anthropics/claude-code#99265](https://github.com/anthropics/claude-code/issues/99265).
 
 **The band says "assumed".** Cache Maxxer has not yet seen how long your cache lives and is assuming an hour. It keeps looking every 15 seconds, or you can set `ttl` yourself.
 

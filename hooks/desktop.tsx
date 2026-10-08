@@ -137,6 +137,8 @@ function ring(cx: number, cy: number, r: number, share: number, color: string) {
 // what the next message re-writes and roughly what that costs. `lead` is where the first figure's ink
 // starts, so the gap before it matches the others.
 function figures(v: View, lead: number): Piece | null {
+  // Before the first request there is nothing to re-write and no rate yet.
+  if (v.cache.startedAt === 0) return null
   const last = lastRequest(v)
   let blocks: { value: string; label: string; share?: number }[] = []
   let alt = ''

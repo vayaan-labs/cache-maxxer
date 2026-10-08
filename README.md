@@ -79,7 +79,7 @@ Cache Maxxer has no server, account or analytics. It makes one network request o
 
 Two other things leave your machine because of it, and both are ordinary Claude Code requests to the place your messages already go. The keep-warm ping asks for a one-word reply over your conversation, only when keep warm is on or you press Warm now, and counts toward your usage like any other request. Compact, when you press it, compacts the conversation.
 
-On your machine, while the cache length is set to `auto`, it reads the last 256 KiB of your session transcript to learn how long the cache lives, looking only at the cache-write token counts in it. It saves three things in the plugin's own data: the keep-warm toggle, whether the detail is open, and the last price table. Everything else lives in memory for the session.
+On your machine, while the cache length is set to `auto`, it reads the last 256 KiB of your session transcript to learn how long the cache lives, looking only at the cache-write token counts in it. It saves four things in the plugin's own data: the keep-warm toggle, whether the detail is open, whether the Desktop band is tucked away, and the last price table. Everything else lives in memory for the session.
 
 ## Contributing
 

@@ -562,6 +562,10 @@ slow('closed, the band is one line: the countdown, the cache length, the hit rat
   expect(await textsOf(empty)).toContain('No requests yet')
   expect(await labelsOf(empty)).toEqual(['Keep warm: off', 'Less ▾'])
   await empty.unmount()
+  // The Desktop says the same, and nothing about a re-write before there is a cache to re-write.
+  const emptyDesktop = await band($, 'desktop')
+  expect((await altsOf(emptyDesktop)).map(d => d.alt)).toEqual(['This session: No requests yet', 'No cache yet'])
+  await emptyDesktop.unmount()
   await closeDetail($)
 
   for (const use of THREE) await request(use)
@@ -643,7 +647,8 @@ slow('the Desktop band hides to a chip and comes back, and the choice is kept', 
   await desktop.press({ key: 'show' })
   expect(await labelsOf(desktop)).toEqual(['Keep warm: off', 'Warm now', 'More ▴', 'Hide'])
   await desktop.press({ key: 'hide' })
-  await openDetail($)
+  // /cache-maxxer more brings it back with the detail open, as /cache-maxxer on its own does.
+  await $.command.run({ command: 'cache-maxxer', args: 'more' } as never)
   expect(await labelsOf(desktop)).toEqual(['Keep warm: off', 'Warm now', 'Less ▾', 'Hide'])
 })
 
