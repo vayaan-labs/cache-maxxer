@@ -3,7 +3,8 @@ import type { ElementTable, EngineInterface, PluginOptions, Register, Timer, Tur
 
 import type { CacheSettings } from '../types'
 
-import { desktopBand, terminalBand, type Actions } from './band'
+import { terminalBand, type Actions } from './band'
+import { desktopBand } from './desktop'
 import { fmtApprox, fmtTokens } from './format'
 import { applyRequest, DEFAULT_SETTINGS, EMPTY_CACHE, EMPTY_PINGS, EMPTY_TOTALS, type Pending } from './model'
 import { isPriceTable, parsePricing, PRICING_URL, REFRESH_MS } from './live-prices'
@@ -36,6 +37,12 @@ const pausedAtom = atom({ plugin: 'cache-maxxer', key: 'paused' } as const, '')
 const pickerAtom = atom({ plugin: 'cache-maxxer', key: 'picker' } as const, '')
 const expandedAtom = atom({ plugin: 'cache-maxxer', key: 'expanded' } as const, false)
 const tickAtom = atom({ plugin: 'cache-maxxer', key: 'tick' } as const, 0)
+const pingingAtom = atom({ plugin: 'cache-maxxer', key: 'pinging' } as const, false)
+const noticeAtom = atom({ plugin: 'cache-maxxer', key: 'notice' } as const, { text: '', until: 0 })
+const hiddenAtom = atom({ plugin: 'cache-maxxer', key: 'hidden' } as const, false)
+
+// How long the Desktop band says what a Warm now did, beside the app's own notice.
+const NOTICE_MS = 8000
 
 type Cfg = { ttl: string; lead: string; idleCap: string; livePrices: boolean }
 
@@ -68,8 +75,10 @@ const rt = {
 async function viewOf($: EngineInterface, cfg: Cfg): Promise<View> {
   // Reading the tick subscribes the drawing to it, so the countdown redraws as it moves.
   await read($, tickAtom)
+  const now = await $.clock.now()
+  const notice = await read($, noticeAtom)
   return makeView({
-    now: await $.clock.now(),
+    now,
     ttlSetting: cfg.ttl,
     cache: await read($, cacheAtom),
     history: await read($, historyAtom),
@@ -80,6 +89,9 @@ async function viewOf($: EngineInterface, cfg: Cfg): Promise<View> {
     paused: await read($, pausedAtom),
     picker: await read($, pickerAtom),
     expanded: await read($, expandedAtom),
+    isPinging: await read($, pingingAtom),
+    notice: notice.until > now ? notice.text : '',
+    hidden: await read($, hiddenAtom),
   })
 }
 
@@ -207,6 +219,7 @@ async function ping($: EngineInterface, cfg: Cfg): Promise<PingResult> {
   if (cache.startedAt === 0 || cache.startedAt + ttl <= startedAt) return { ok: false, reason: 'the cache has already expired' }
 
   rt.isPinging = true
+  await update($, pingingAtom, () => true)
   try {
     const r = await $.model.fork({ prompt: PING_PROMPT })
     if (!('usage' in r)) return { ok: false, reason: 'nothing has been said in this conversation yet' }
@@ -239,6 +252,7 @@ async function ping($: EngineInterface, cfg: Cfg): Promise<PingResult> {
     return { ok: false, reason: error instanceof Error ? error.message : String(error) }
   } finally {
     rt.isPinging = false
+    await update($, pingingAtom, () => false)
   }
 }
 
@@ -252,8 +266,17 @@ const pingText = (r: PingResult) => {
     : `Cache kept warm · a background request read ${fmtTokens(r.read)} tokens from it, so the timer restarted${cost}`
 }
 
+// A press while a ping is on its way does nothing: the button already says Warming…. The result is
+// a notice, and for a few seconds a line in the band too, since the Desktop shows its notices at the
+// window's edge, away from the band that was pressed.
 async function warmNow($: EngineInterface, cfg: Cfg) {
-  $.ui.toast(pingText(await ping($, cfg)))
+  if (rt.isPinging) return
+  const text = pingText(await ping($, cfg))
+  $.ui.toast(text)
+  const until = (await $.clock.now()) + NOTICE_MS
+  await update($, noticeAtom, () => ({ text, until }))
+  // The countdown's ticks redraw the band; with no cache ticking, one more redraw takes the line away.
+  $.clock.after(NOTICE_MS, () => void update($, tickAtom, t => t + 1))
 }
 
 // The one place Keep warm changes, whichever button or command asks. A toggle flips the setting
@@ -308,13 +331,21 @@ async function setExpanded($: EngineInterface, change: boolean | 'toggle') {
   return next
 }
 
-// The keep-warm toggle and whether the detail is open persist for new sessions; the rest start from
-// the plugin's settings.
+// Tucks the Desktop band away to its chip or brings it back; remembered for new sessions.
+async function setHidden($: EngineInterface, hidden: boolean) {
+  await update($, hiddenAtom, () => hidden)
+  await $.store.set('hidden', hidden)
+}
+
+// The keep-warm toggle, whether the detail is open and whether the band is tucked away persist for
+// new sessions; the rest start from the plugin's settings.
 async function seedSettings($: EngineInterface, cfg: Cfg) {
   const saved = await $.store.get('keepWarm')
   await update($, settingsAtom, () => ({ ...DEFAULT_SETTINGS, keepWarm: saved === true, lead: cfg.lead, idleCap: cfg.idleCap }))
   const expanded = await $.store.get('expanded')
   await update($, expandedAtom, () => expanded === true)
+  const hidden = await $.store.get('hidden')
+  await update($, hiddenAtom, () => hidden === true)
   const now = await $.clock.now()
   await update($, activityAtom, () => now)
 }
@@ -345,6 +376,8 @@ function bandActions($: EngineInterface, cfg: Cfg): Actions {
     warmNow: () => void warmNow($, cfg),
     compact: () => void compact($),
     toggleExpanded: () => void setExpanded($, 'toggle'),
+    hide: () => void setHidden($, true),
+    show: () => void setHidden($, false),
     togglePicker: which => void update($, pickerAtom, open => (open === which ? '' : which)),
     setLead: value => void choose(s => ({ ...s, lead: value })),
     setIdleCap: value => void choose(s => ({ ...s, idleCap: value })),
@@ -356,7 +389,12 @@ async function runCommand($: EngineInterface, cfg: Cfg, args: string): Promise<{
   if (word === '') {
     // With nothing to draw on (a -p run) the answer is text.
     if ((await $.session.surfaces()).length === 0) return { text: summaryText(await viewOf($, cfg)) }
+    await setHidden($, false)
     await setExpanded($, true)
+    return {}
+  }
+  if (word === 'hide' || word === 'show') {
+    await setHidden($, word === 'hide')
     return {}
   }
   if (word === 'less') {
@@ -368,7 +406,7 @@ async function runCommand($: EngineInterface, cfg: Cfg, args: string): Promise<{
     await setKeepWarm($, cfg, value === 'on')
     return { text: `Keep warm is ${value}.` }
   }
-  return { text: `Usage: /${COMMAND} (the detail), /${COMMAND} less, /${COMMAND} warm, /${COMMAND} keep on|off` }
+  return { text: `Usage: /${COMMAND} (the detail), /${COMMAND} less, /${COMMAND} hide|show, /${COMMAND} warm, /${COMMAND} keep on|off` }
 }
 
 export const register: Register = (on, options) => {
@@ -385,7 +423,7 @@ export const register: Register = (on, options) => {
       await $.command.register({
         name: COMMAND,
         description: 'Show the prompt cache, or keep it warm',
-        argumentHint: '[less | warm | keep on|off]',
+        argumentHint: '[less | hide | show | warm | keep on|off]',
         immediate: true,
       })
     } catch {
@@ -467,8 +505,21 @@ export const register: Register = (on, options) => {
     const rest = await next(e)
     const actions = bandActions($, cfg)
     const el = $.ui.resolve(e)
-    if (e.surface === 'desktop') return desktopBand(el as ElementTable<'desktop'>, v, e.props.bodyColumns, actions, rest)
+    if (e.surface === 'desktop') return desktopBand(el as ElementTable<'desktop'>, v, actions, rest)
     return terminalBand(el as ElementTable<'terminal'>, v, e.props.bodyColumns, actions, rest)
+  })
+
+  // Hide and Show act on the press itself, by the button's key, as well as through the closure the
+  // drawing carries: the countdown redraws the band each second, and a press that lands while the
+  // drawing is being replaced still reaches its key. Both set the same value, so running twice is
+  // the same as once.
+  on('ui.press', { plugin: 'cache-maxxer', element: 'hide' }, async ($, e, next) => {
+    await setHidden($, true)
+    return next(e)
+  })
+  on('ui.press', { plugin: 'cache-maxxer', element: 'show' }, async ($, e, next) => {
+    await setHidden($, false)
+    return next(e)
   })
 
   on('command.run', { command: COMMAND }, async ($, e) => runCommand($, cfg, e.args))

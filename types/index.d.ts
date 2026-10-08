@@ -71,10 +71,16 @@ declare module 'claude-code' {
       paused: string
       // Which keep-warm choice has its options open in the band ('lead' or 'cap'), else empty
       picker: string
-      // Whether the band shows the session's detail under its first line
+      // Whether the band shows the session's detail above its first line
       expanded: boolean
       // The second the countdown last moved, written each second so the band redraws
       tick: number
+      // Whether a ping is on its way, so Warm now says Warming… until it is back
+      pinging: boolean
+      // What the last Warm now did, and until when (ms since the epoch) the Desktop band says so
+      notice: { text: string; until: number }
+      // Whether the Desktop band is tucked away to its chip
+      hidden: boolean
     }
   }
 }

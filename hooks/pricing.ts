@@ -82,6 +82,13 @@ export const writeCostUsd = (model: string, written: number, ttlMs: number, prom
   return p ? (written * writePrice(p, ttlMs)) / 1e6 : null
 }
 
+// What reading tokens from a warm cache saved over re-writing them: each paid the read price instead
+// of the write price, in requests whose prompt held promptTokens.
+export const keptWarmUsd = (model: string, read: number, ttlMs: number, promptTokens = read): number | null => {
+  const p = priceOf(model, promptTokens)
+  return p ? (read * (writePrice(p, ttlMs) - p.read)) / 1e6 : null
+}
+
 // What one request cost in all, or null when the model has no price.
 export const requestCostUsd = (model: string, t: Tokens, ttlMs: number): number | null => {
   const p = priceOf(model, promptOf(t))

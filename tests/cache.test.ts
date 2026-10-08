@@ -1,9 +1,10 @@
 import type { On } from 'claude-code'
 import { expect, mock, test, type Engine } from 'claude-code/testing'
 
+import { fmtApprox } from '../hooks/format'
 import { isPriceTable, parsePricing } from '../hooks/live-prices'
 import { applyRequest, EMPTY_CACHE, EMPTY_TOTALS, inferCause, isBreak } from '../hooks/model'
-import { requestCostUsd, setLivePrices, writeCostUsd } from '../hooks/pricing'
+import { keptWarmUsd, requestCostUsd, setLivePrices, writeCostUsd } from '../hooks/pricing'
 import { parseTtl } from '../hooks/ttl'
 
 const T0 = Date.parse('2026-10-04T10:00:00Z')
@@ -107,13 +108,21 @@ const band = ($: Engine, surface: 'terminal' | 'desktop', columns = 200) =>
 const textsOf = async (ui: { findAll: (q: { type: string }) => Promise<{ text: string }[]> }) =>
   (await ui.findAll({ type: 'Text' })).map(t => t.text).join('')
 
+// What a person can read on the band: its text, and on the Desktop what each drawing says.
+const readableOf = async (ui: { findAll: (q: { type: string }) => Promise<{ text?: string; props: { alt?: unknown } }[]> }) =>
+  (await ui.findAll({ type: 'Text' })).map(t => t.text).join('') + ' ' + (await ui.findAll({ type: 'Svg' })).map(s => String(s.props.alt)).join(' ')
+
+// The Desktop's drawings, by what each says.
+const altsOf = async (ui: { findAll: (q: { type: string }) => Promise<{ props: { alt?: unknown; isInteractive?: unknown } }[]> }) =>
+  (await ui.findAll({ type: 'Svg' })).map(s => ({ alt: String(s.props.alt), isInteractive: s.props.isInteractive === true }))
+
 const labelsOf = async (ui: { findAll: (q: { type: string }) => Promise<{ props: { label?: unknown } }[]> }) =>
   (await ui.findAll({ type: 'Button' })).map(b => b.props.label)
 
 // How a drawn node reads in a terminal: text as it is, a button as "[ label ]", the pieces of a row
 // side by side (a row's column gap between them, a Box of fixed width taking that width) and the rows
 // of a column one under another.
-type DrawnProps = { flexDirection?: string; columnGap?: number; label?: string; width?: number; color?: string }
+type DrawnProps = { flexDirection?: string; columnGap?: number; label?: string; width?: number; color?: string; backgroundColor?: string }
 type Node = { type?: string; props?: DrawnProps; children?: unknown[] }
 
 const textIn = (node: unknown): string => (typeof node === 'string' ? node : ((node as Node).children ?? []).map(textIn).join(''))
@@ -161,14 +170,15 @@ function colorsIn(node: unknown, out: string[] = []): string[] {
   const n = node as Node
   if (typeof node === 'string' || !n) return out
   if (n.type === 'Text' && n.props?.color) out.push(n.props.color)
+  if (n.type === 'Text' && n.props?.backgroundColor) out.push(n.props.backgroundColor)
   for (const k of n.children ?? []) colorsIn(k, out)
   return out
 }
 
 const WIDTHS = [...Array.from({ length: 91 }, (_, i) => 40 + i), 140, 160, 200, 250]
 
-// At every width the terminal band draws no row wider than itself, on both surfaces the buttons are
-// whole, and the text holds every part in `parts`.
+// At every width the terminal band draws no row wider than itself, its buttons are whole, and the
+// text holds every part in `parts`.
 async function expectBandFits($: Engine, state: string, parts: readonly string[] = []) {
   for (const columns of WIDTHS) {
     const ui = await band($, 'terminal', columns)
@@ -294,7 +304,14 @@ test('a request is priced at the tier its own prompt falls in, and the page wins
   expect(writeCostUsd('claude-opus-5-5', 1_000_000, 60 * MINUTE)).toBe(1)
   // A model the page did not list still has its built-in price.
   expect(writeCostUsd('claude-haiku-4-5', 1_000_000, 60 * MINUTE)).toBe(2)
+  // A million tokens kept warm paid the read price, 0.1, instead of the hour write price, 2.
+  expect(usd(keptWarmUsd('claude-haiku-4-5', 1_000_000, 60 * MINUTE))).toBe(usd(1.9))
   setLivePrices(null)
+
+  // How an estimate reads: a loss early in a session (writes not yet paid back) never prints a
+  // symbol pair such as "-< $0.01".
+  const shown: [number, string][] = [[0.31, '~$0.31'], [0.003, '< $0.01'], [-0.06, '-$0.06'], [-0.007, '-$0.01'], [-0.003, '~$0.00'], [-140, '-$140']]
+  for (const [usd, text] of shown) expect(fmtApprox(usd), String(usd)).toBe(text)
 })
 
 fiveMinute('a rebuilt cache is explained once, and subagent requests do not count', async ($, on) => {
@@ -370,8 +387,10 @@ fiveMinute('keep warm pings once at the lead time and restarts the entry', async
   await clock.advance(30 * 1000)
   const ui = await band($, 'terminal')
   expect(await textsOf(ui)).toMatch(/4:[0-9]{2}/)
-  // The keep-warm row shows with keep warm on, the detail closed or not.
-  expect(await textsOf(ui)).toContain('1 background ping so far')
+  // The count of pings is in the detail, never on the closed band.
+  expect(await textsOf(ui)).not.toContain('warm ping')
+  await ui.press({ key: 'more' })
+  expect(await textsOf(ui)).toMatch(/1 warm ping · \d+K tokens read · cost saved ~\$\d+\.\d\d/)
   expect(toasts).toEqual([])
 })
 
@@ -392,9 +411,10 @@ fiveMinute('a ping that finds the cache already gone says it rebuilt it and does
   // The rebuilt entry is warm from the ping on, and the keep-warm row does not call it a kept-warm ping.
   await clock.advance(30 * 1000)
   expect(fork.calls).toBe(1)
+  await openDetail($)
   const text = await textsOf(await band($, 'terminal', 200))
   expect(text).toMatch(/● 4:[0-9]{2}/)
-  expect(text).toContain('No ping has kept it warm yet · 1 rebuilt a lapsed cache · ~$0.31')
+  expect(text).toContain('No ping has kept it warm yet · 1 rebuilt a lapsed cache · cost ~$0.31')
 })
 
 fiveMinute('keep warm waits for a running turn, and pings once it ends', async ($, on) => {
@@ -439,7 +459,7 @@ idleCap('keep warm stops once the person has been idle past the cap', async ($, 
   const pinged = fork.calls
   expect(pinged).toBeGreaterThan(5)
   for (const surface of ['terminal', 'desktop'] as const) {
-    expect(await textsOf(await band($, surface)), surface).toMatch(/Paused: (you have been )?idle for 1h\./)
+    expect(await readableOf(await band($, surface)), surface).toMatch(/Paused: (you have been )?idle for 1h\./)
   }
 
   await clock.advance(10 * MINUTE)
@@ -472,18 +492,27 @@ fiveMinute('Warm now does nothing while a turn runs, and never pings twice at on
   expect(toasts).toEqual(['Could not warm the cache: Claude is working'])
   await $.turn.complete({ answer: 'done', durationMs: 1000, isAborted: false, turnId: 't2', reason: 'answer', usage: null } as never)
 
-  // Two presses while the first ping is still in flight make one request.
+  // While a ping is on its way the button says so, and a second press makes no second request and
+  // no second notice.
   fork.answer = async () => {
     await clock.sleep(5000)
     return { isAnswered: true, text: 'ok', usage: { input_tokens: 12, output_tokens: 3, cache_read_input_tokens: 61_000, cache_creation_input_tokens: 0 } }
   }
-  const first = ui.press({ key: 'warm' })
+  const desktop = await band($, 'desktop', 200)
+  const first = desktop.press({ key: 'warm' })
   await clock.advance(1000)
+  expect((await ui.find({ key: 'warm' }))?.props.label).toBe('Warming…')
   const second = ui.press({ key: 'warm' })
-  await clock.advance(10_000)
+  await clock.advance(5000)
   await Promise.all([first, second])
   expect(fork.calls).toBe(1)
-  expect(toasts.slice(1)).toEqual(['Could not warm the cache: a ping is already running', expect.stringMatching(/^Cache kept warm · a background request read 61K tokens from it, so the timer restarted/)])
+  expect(toasts.slice(1)).toEqual([expect.stringMatching(/^Cache kept warm · a background request read 61K tokens from it, so the timer restarted/)])
+  expect((await ui.find({ key: 'warm' }))?.props.label).toBe('Warm now')
+  // The Desktop shows its notices at the window's edge, so its band says what happened too, for a while.
+  expect(await textsOf(desktop)).toContain('Cache kept warm · a background request read 61K tokens')
+  expect(await textsOf(ui)).not.toContain('Cache kept warm')
+  await clock.advance(9000)
+  expect(await textsOf(desktop)).not.toContain('Cache kept warm')
 })
 
 slow('auto learns the entry life once the transcript holds the write, though it did not when the turn ended', async ($, on) => {
@@ -519,7 +548,7 @@ slow('closed, the band is one line: the countdown, the cache length, the hit rat
   const empty = await band($, 'terminal')
   expect(await textsOf(empty)).toContain('No cache yet')
   expect(await textsOf(empty)).toContain('No requests yet')
-  expect(await labelsOf(empty)).toEqual(['Keep warm: off', 'Less ▴'])
+  expect(await labelsOf(empty)).toEqual(['Keep warm: off', 'Less ▾'])
   await empty.unmount()
   await closeDetail($)
 
@@ -530,12 +559,30 @@ slow('closed, the band is one line: the countdown, the cache length, the hit rat
   const [root] = await terminal.findAll({ type: 'Box' })
   const text = await textsOf(terminal)
   expect(text).toContain('● 59:50')
-  expect(text).toContain('━')
+  // The countdown's bar is solid cells: the life left in the warm color over a dim track.
+  expect(colorsIn(root)).toEqual(expect.arrayContaining(['success', 'inactive']))
   expect(text).toContain('1 hour cache, assumed')
-  expect(text).toContain('97% hit')
-  // The session's numbers wait for the detail.
+  // The last request's hit rate and the session's, both on the first line.
+  expect(text).toContain('hit 96.73% last request · 65.39% this session')
+  // Where the band is short of room the two rates are named first.
+  const narrow = await band($, 'terminal', 80)
+  expect(await textsOf(narrow)).toContain('request 96.73% · session 65.39%')
+  await narrow.unmount()
+  // The words shorten before the bar does, so the line stays one row with the whole bar while the
+  // short wordings fit, and the bar gives up cells only to keep the line whole.
+  const barCells = async (ui: Awaited<ReturnType<typeof band>>) =>
+    (await ui.findAll({ type: 'Text' })).filter(t => (t as unknown as Node).props?.backgroundColor).reduce((n, t) => n + t.text.length, 0)
+  for (const [columns, cells] of [[116, 10], [112, 6]] as const) {
+    const ui = await band($, 'terminal', columns)
+    const [top] = await ui.findAll({ type: 'Box' })
+    expect(linesOf(top), `${columns} wide`).toBe(2)
+    expect(await textsOf(ui), `${columns} wide`).toContain('request 96.73% · session 65.39%')
+    expect(await barCells(ui), `${columns} wide`).toBe(cells)
+    await ui.unmount()
+  }
+  // The session's other numbers wait for the detail.
   expect(text).not.toContain('requests')
-  expect(await labelsOf(terminal)).toEqual(['Keep warm: off', 'Warm now', 'More ▾'])
+  expect(await labelsOf(terminal)).toEqual(['Keep warm: off', 'Warm now', 'More ▴'])
   // One line, then the line another mod drew in the same place.
   expect(linesOf(root)).toBe(2)
   expect(text.endsWith('drawn by Claude Code')).toBe(true)
@@ -543,20 +590,49 @@ slow('closed, the band is one line: the countdown, the cache length, the hit rat
   for (const color of colorsIn(root)) expect(['inactive', 'success', 'warning', 'error', 'claude'], color).toContain(color)
   await terminal.unmount()
 
+  // The Desktop draws the countdown and the two rates as one drawing that says in words what it shows.
   const desktop = await band($, 'desktop')
-  const svg = await desktop.find({ type: 'Svg' })
-  expect(svg?.props.alt).toContain('59:50')
-  expect(svg?.props.alt).toContain('1 hour cache, assumed')
-  expect(await textsOf(desktop)).toContain('97% hit')
+  const drawings = (await altsOf(desktop)).map(d => d.alt)
+  expect(drawings).toEqual(['59:50 left, Warm, 1 hour cache, assumed; hit 96.73% last request · 65.39% this session'])
   expect(await textsOf(desktop)).toContain('drawn by Claude Code')
-  expect(await labelsOf(desktop)).toEqual(['Keep warm: off', 'Warm now', 'More ▾'])
+  // The Desktop band carries a Hide button after its own.
+  expect(await labelsOf(desktop)).toEqual(['Keep warm: off', 'Warm now', 'More ▴', 'Hide'])
   await desktop.unmount()
 
   // Once the entry lapses the band says what the next message re-writes, and offers to compact.
   await clock.advance(61 * MINUTE)
   const expired = await band($, 'terminal')
   expect(await textsOf(expired)).toContain('expired  next message re-writes 63K tokens (~$0.51)')
-  expect(await labelsOf(expired)).toEqual(['Keep warm: off', 'Compact', 'More ▾'])
+  expect(await labelsOf(expired)).toEqual(['Keep warm: off', 'Compact', 'More ▴'])
+})
+
+slow('the Desktop band hides to a chip and comes back, and the choice is kept', async ($, on) => {
+  const { request } = await boot($, on)
+  for (const use of THREE) await request(use)
+
+  const desktop = await band($, 'desktop', 200)
+  expect((await desktop.find({ key: 'hide' }))?.props.hotkey).toBe('h')
+  await desktop.press({ key: 'hide' })
+  // Tucked away: one chip with the countdown in words and a way back, nothing else of the band.
+  expect(await labelsOf(desktop)).toEqual(['Show'])
+  // The words are the app's own text, so they read in the app's font; only the dot is drawn.
+  expect((await altsOf(desktop)).map(d => d.alt)).toEqual(['Warm'])
+  expect(await textsOf(desktop)).toMatch(/^Cache warm·\d\d:\d\dleft/)
+  // The terminal has the app's own fold for its band, so it draws in full whatever the Desktop chose.
+  const terminal = await band($, 'terminal', 200)
+  expect(await labelsOf(terminal)).toEqual(['Keep warm: off', 'Warm now', 'More ▴'])
+  await terminal.unmount()
+
+  // It stays tucked away for the next session, and Show or /cache-maxxer brings it back.
+  await $.session.end({ reason: 'clear' } as never)
+  await $.classic.SessionStart({ source: 'clear' } as never)
+  await request({ read: 0, written: 60_000, uncached: 20, output: 300 })
+  expect(await labelsOf(desktop)).toEqual(['Show'])
+  await desktop.press({ key: 'show' })
+  expect(await labelsOf(desktop)).toEqual(['Keep warm: off', 'Warm now', 'More ▴', 'Hide'])
+  await desktop.press({ key: 'hide' })
+  await openDetail($)
+  expect(await labelsOf(desktop)).toEqual(['Keep warm: off', 'Warm now', 'Less ▾', 'Hide'])
 })
 
 slow('More opens the detail in the band and Less closes it, and the choice is kept', async ($, on) => {
@@ -569,18 +645,37 @@ slow('More opens the detail in the band and Less closes it, and the choice is ke
     const ui = await band($, surface, 200)
     expect((await ui.find({ key: 'more' }))?.props.hotkey).toBe('m')
     await ui.press({ key: 'more' })
-    const text = await textsOf(ui)
+    const text = await readableOf(ui)
     // The session's numbers, each labelled once, the requests and the latest break, under their labels.
-    for (const part of ['This session', '% hit', '4 requests', 'read', 'written', 'uncached', 'context', 'saved ', 'writes ~$', 'Requests', 'Last break', '63K re-written', 'prefix changed (system prompt, tools or MCP servers)']) {
+    const writes = surface === 'terminal' ? 'write cost ~$' : 'write cost'
+    for (const part of ['This session', '% hit', '4 requests', 'read', 'written', 'saved', writes, 'Last break', '63K re-written', 'prefix changed (system prompt, tools or MCP servers)']) {
       expect(text, `${surface}: ${part}`).toContain(part)
     }
-    if (surface === 'terminal') expect(text).toContain('■ read')
-    else expect((await ui.findAll({ type: 'Svg' })).length).toBe(2)
-    expect(await labelsOf(ui)).toEqual(['Keep warm: off', 'Warm now', 'Less ▴'])
+    // The last requests as dots, a red mark on the one whose cache read dropped, and the count in words.
+    expect(text).toContain('● ● ● ▲')
+    expect(text).toContain(surface === 'terminal' ? 'Last 4 requests' : '1 cache break in the last 4')
+    expect(text).toContain('1 cache break')
+    // The Desktop draws three rows above and on the first line, each one image that says in words what
+    // it shows: the session's numbers in order, the last requests beside the latest break, and the
+    // countdown with the two rates. None is interactive, and all share one width and leave their height
+    // to it, so a narrow band shrinks them alike.
+    if (surface === 'desktop') {
+      const drawings = await altsOf(ui)
+      expect(drawings).toHaveLength(3)
+      expect(drawings[2]!.alt).toContain(' left, ')
+      expect(drawings[0]!.alt).toMatch(/^This session: \S+ hit rate, 4 requests, \S+ read, \S+ written, \S+ write cost, \S+ saved$/)
+      expect(drawings[1]!.alt).toMatch(/^Last 4 requests: .*; Last break: prefix changed/)
+      expect(drawings[2]!.alt).toMatch(/; hit \d+\.\d\d% last request · \d+\.\d\d% this session$/)
+      expect(drawings.some(d => d.isInteractive)).toBe(false)
+      const sizes = (await ui.findAll({ type: 'Svg' })).map(s => [s.props.width, s.props.height])
+      expect(new Set(sizes.map(([w]) => w)).size).toBe(1)
+      expect(sizes.every(([w, h]) => typeof w === 'number' && h === undefined)).toBe(true)
+    }
+    expect(await labelsOf(ui)).toEqual(['Keep warm: off', 'Warm now', 'Less ▾', ...(surface === 'desktop' ? ['Hide'] : [])])
     // With keep warm off its choices are not drawn.
     expect(await ui.find({ key: 'lead' })).toBeUndefined()
     await ui.press({ key: 'more' })
-    expect(await textsOf(ui)).not.toContain('This session')
+    expect(await readableOf(ui)).not.toContain('This session')
     await ui.unmount()
   }
 
@@ -596,36 +691,67 @@ fiveMinute('keep warm shows its choices in the band whenever it is on, and they 
   const { request } = await boot($, on)
   for (const use of THREE) await request(use)
 
-  for (const surface of ['terminal', 'desktop'] as const) {
+  // The Desktop gives each choice the app's own menu.
+  const desktop = await band($, 'desktop', 160)
+  await desktop.press({ key: 'keep' })
+  expect((await desktop.find({ key: 'lead' }))?.type).toBe('Select')
+  expect((await desktop.find({ key: 'lead' }))?.props.value).toBe('auto')
+  expect((await desktop.find({ key: 'cap' }))?.props.value).toBe('3h')
+  expect((await desktop.find({ key: 'lead' }))?.props.options.map((o: { label: string }) => o.label)).toEqual(['automatic', '1 minute', '2 minutes', '4 minutes', '8 minutes'])
+  await desktop.select({ key: 'lead', value: '2m' })
+  await desktop.select({ key: 'cap', value: 'none' })
+  expect((await desktop.find({ key: 'lead' }))?.props.value).toBe('2m')
+  expect((await desktop.find({ key: 'cap' }))?.props.value).toBe('none')
+  await desktop.select({ key: 'lead', value: 'auto' })
+  await desktop.select({ key: 'cap', value: '3h' })
+  await desktop.press({ key: 'keep' })
+  expect(await desktop.find({ key: 'lead' })).toBeUndefined()
+  await desktop.unmount()
+
+  for (const surface of ['terminal'] as const) {
     const ui = await band($, surface, 160)
     expect(await ui.find({ key: 'lead' })).toBeUndefined()
 
-    // Keep warm on brings its choices and the pings line, the detail closed.
+    // Keep warm on brings its choices, the detail closed; each ping has its own notice, so the
+    // count of them waits for the detail.
     await ui.press({ key: 'keep' })
     expect((await ui.find({ key: 'keep' }))?.props.label).toBe('Keep warm: on')
     expect((await ui.find({ key: 'keep' }))?.props.variant).toBe('primary')
-    expect(await textsOf(ui)).toContain('Keep warm')
-    expect(await textsOf(ui)).toContain('No pings yet.')
+    // The row carries no label of its own: its choices say what they are.
+    expect(await textsOf(ui)).not.toContain('Keep warm')
+    expect(await textsOf(ui)).not.toContain('No pings yet.')
     // A closed choice is a button that says it opens: its arrow and a hint to click it.
-    expect((await ui.find({ key: 'lead' }))?.props.label).toBe('Ping: automatically before expiry ▾')
-    expect((await ui.find({ key: 'cap' }))?.props.label).toBe('Stop: after 3 hours idle ▾')
+    expect((await ui.find({ key: 'lead' }))?.props.label).toBe('Warm before expiry: automatic ▴')
+    expect((await ui.find({ key: 'cap' }))?.props.label).toBe('Stop after idle: 3 hours ▴')
     expect(await textsOf(ui)).toContain('click to change')
 
-    // Opened, it lists its options as buttons and offers Cancel; a pick closes it.
+    // Opened, the choices stay where they are and its options list under them, one per row, the
+    // current one highlighted; its own button closes them unchanged and a pick closes them.
+    const [root] = await ui.findAll({ type: 'Box' })
+    const closedLines = linesOf(root)
     await ui.press({ key: 'lead' })
-    expect(await textsOf(ui)).toContain('Ping before expiry:')
+    expect((await ui.find({ key: 'lead' }))?.props.label).toBe('Warm before expiry: automatic ▾')
+    expect((await ui.find({ key: 'cap' }))?.props.label).toBe('Stop after idle: 3 hours ▴')
     const open = await labelsOf(ui)
-    expect(open.filter(l => !['Keep warm: on', 'Warm now', 'More ▾'].includes(l as string))).toEqual(['automatic', '1 minute', '2 minutes', '4 minutes', '8 minutes', 'Cancel'])
+    expect(open.filter(l => !['Keep warm: on', 'Warm now', 'More ▴', 'Warm before expiry: automatic ▾', 'Stop after idle: 3 hours ▴'].includes(l as string))).toEqual(['automatic', '1 minute', '2 minutes', '4 minutes', '8 minutes'])
+    if (surface === 'terminal') expect(linesOf((await ui.findAll({ type: 'Box' }))[0]!)).toBe(closedLines + 5)
     expect((await ui.find({ key: 'lead:auto' }))?.props.variant).toBe('primary')
-    await ui.press({ key: 'picker-cancel' })
+    expect((await ui.find({ key: 'lead:2m' }))?.props.variant).toBeUndefined()
+    await ui.press({ key: 'lead' })
     expect(await ui.find({ key: 'lead:2m' })).toBeUndefined()
+    expect((await ui.find({ key: 'lead' }))?.props.label).toBe('Warm before expiry: automatic ▴')
     await ui.press({ key: 'lead' })
     await ui.press({ key: 'lead:2m' })
     expect(await ui.find({ key: 'lead:2m' })).toBeUndefined()
-    expect((await ui.find({ key: 'lead' }))?.props.label).toBe('Ping: 2 minutes before expiry ▾')
+    expect((await ui.find({ key: 'lead' }))?.props.label).toBe('Warm before expiry: 2 minutes ▴')
     await ui.press({ key: 'cap' })
     await ui.press({ key: 'cap:none' })
-    expect((await ui.find({ key: 'cap' }))?.props.label).toBe('Stop: never ▾')
+    expect((await ui.find({ key: 'cap' }))?.props.label).toBe('Stop after idle: never ▴')
+
+    // With the detail open, the count of pings joins the row.
+    await ui.press({ key: 'more' })
+    expect(await textsOf(ui)).toContain('No pings yet.')
+    await ui.press({ key: 'more' })
     for (const [picker, value] of [['lead', 'auto'], ['cap', '3h']] as const) {
       await ui.press({ key: picker })
       await ui.press({ key: `${picker}:${value}` })
@@ -645,6 +771,35 @@ fiveMinute('keep warm shows its choices in the band whenever it is on, and they 
   }
 })
 
+slow('an open choice lists its options right above its own button, and the first line stays at the bottom, at every width', async ($, on) => {
+  const { request } = await boot($, on)
+  for (const use of THREE) await request(use)
+  await keepWarmOn($)
+  await openDetail($)
+  for (const columns of WIDTHS) {
+    for (const [which, first] of [['lead', 'automatic'], ['cap', '1 hour']] as const) {
+      const ui = await band($, 'terminal', columns)
+      await ui.press({ key: which })
+      const [root] = await ui.findAll({ type: 'Box' })
+      const rows = rowsOf(root)
+      const label = String((await ui.find({ key: which }))?.props.label)
+      const at = rows.findIndex(r => r.includes(`[ ${label} ]`))
+      const option = rows.findIndex(r => r.includes(`[ ${first} ]`))
+      const where = `${columns} wide, ${which}`
+      // The list stands above the row of the button that opened it, starting in that button's column.
+      expect(option, where).toBeGreaterThanOrEqual(0)
+      expect(option, where).toBeLessThan(at)
+      expect(rows[option]!.indexOf(`[ ${first} ]`), where).toBe(rows[at]!.indexOf(`[ ${label} ]`))
+      // The first line, with its buttons, is the band's last, under the detail and the keep-warm row.
+      const main = rows.findIndex(r => r.includes('[ Keep warm: on ]'))
+      expect(main, where).toBeGreaterThan(rows.findIndex(r => r.includes('This session')))
+      expect(main, where).toBeGreaterThan(at)
+      await ui.press({ key: which })
+      await ui.unmount()
+    }
+  }
+})
+
 slow('the band never draws a row wider than itself and loses nothing, from 40 to 250 columns, in every state', async ($, on) => {
   const { clock, request } = await boot($, on)
   await openDetail($)
@@ -656,15 +811,15 @@ slow('the band never draws a row wider than itself and loses nothing, from 40 to
   await request({ read: 0, written: 63_000, uncached: 20, output: 100 })
   await clock.advance(10 * 1000)
   // Closed, every piece of the first line is there at every width, whatever row it landed on.
-  await expectBandFits($, 'warm, closed', ['● 59:50', '% hit', 'Keep warm: off'])
+  await expectBandFits($, 'warm, closed', ['● 59:50', '%', 'session', 'Keep warm: off'])
   await openDetail($)
   await expectBandFits($, 'warm, open, two breaks', ['● 59:50', 'This session', '5 requests', 'Last break', 'and 1 more'])
   await keepWarmOn($)
-  await expectBandFits($, 'warm, open, keep warm on', ['Ping:', 'Stop:', 'No pings yet.'])
+  await expectBandFits($, 'warm, open, keep warm on', ['automatic ▴', 'Stop', 'No pings yet.'])
   const ui = await band($, 'terminal')
   await ui.press({ key: 'cap' })
   await ui.unmount()
-  await expectBandFits($, 'warm, open, a choice open', ['Stop when idle for:', 'never stop', 'Cancel'])
+  await expectBandFits($, 'warm, open, a choice open', ['Stop', '1 hour', '3 hours', '8 hours', 'never'])
   await keepWarmOff($)
 
   // Expiring soon says so in words as well as color.
@@ -677,7 +832,7 @@ slow('the band never draws a row wider than itself and loses nothing, from 40 to
   await expectBandFits($, 'expired, closed', ['expired', 're-writes'])
   await openDetail($)
   await keepWarmOn($)
-  await expectBandFits($, 'expired, open, keep warm on', ['expired', 'Compact', 'Ping:'])
+  await expectBandFits($, 'expired, open, keep warm on', ['expired', 'Compact', 'automatic ▴'])
 
   // Wide enough, the first line holds the status and the buttons together.
   await closeDetail($)
@@ -695,5 +850,5 @@ idleCap('the band fits its width with pings counted and keep warm paused for idl
   await clock.advance(66 * MINUTE)
   expect(fork.calls).toBeGreaterThan(5)
   await openDetail($)
-  await expectBandFits($, 'pings counted and paused', ['Paused: ', 'pings so far'])
+  await expectBandFits($, 'pings counted and paused', ['Paused: ', 'warm pings'])
 })
