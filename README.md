@@ -39,7 +39,13 @@ Cache Maxxer adds a thin band right above your input box with the time left on t
 Or paste this prompt to your agent:
 
 ```
-Install the Cache Maxxer plugin for Claude Code (https://github.com/vayaan-labs/cache-maxxer). Run `claude plugin marketplace add vayaan-labs/claude-plugins`, then `claude plugin install cache-maxxer@vayaan-labs`, check that `claude plugin list` shows it enabled, and then tell me to run /reload-plugins.
+Install the Cache Maxxer plugin for Claude Code
+(https://github.com/vayaan-labs/cache-maxxer).
+Run these two commands:
+claude plugin marketplace add vayaan-labs/claude-plugins
+claude plugin install cache-maxxer@vayaan-labs
+Check that `claude plugin list` shows it enabled,
+then tell me to run /reload-plugins.
 ```
 
 Press **More** for the session's numbers, the last 10 requests with any rebuild marked, and the latest rebuild with its cost and cause. Press **Keep warm** to have it ping just before the cache expires. Everything else, from the settings to the `/cache-maxxer` command, is in the [guide](docs/guide.md).
@@ -51,7 +57,7 @@ Press **More** for the session's numbers, the last 10 requests with any rebuild 
 - **Every rebuild explained.** One notice saying how much was re-written and why: you were away too long, you switched model, compacted or cleared, or Claude Code's setup changed (its system prompt, tools or MCP servers).
 - **Keep warm.** One tiny request just before expiry resets the timer for a few cents. It stops after three hours without a message from you, or whatever limit you set.
 - **What the cache is worth.** Tokens read from the cache and written to it, what the writes cost and what the reads saved, priced from Anthropic's own price table, which it checks once a day so a new model gets prices as soon as Anthropic lists it.
-- **Terminal and desktop app.** A one-line band in the terminal, and in the Claude desktop app a drawn one with a large countdown, hit-rate rings and native menus that matches your light or dark appearance and fits a narrow window.
+- **Terminal and desktop app.** A one-line band in the terminal. In the Claude desktop app, a drawn band with a large countdown, hit-rate rings and native menus, which matches your light or dark appearance and fits a narrow window.
 
 <div align="center">
 
