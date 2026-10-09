@@ -4,7 +4,7 @@
 
 # Cache Maxxer
 
-**A Claude Code plugin that shows your prompt cache's countdown and hit rate, and can keep the cache warm so you stop paying to rebuild it.**
+**A Claude Code mod that cuts your costs by 96% by keeping your cache warm, with a live countdown and your real hit rate.**
 
 [**Install**](#get-started) · [Guide](docs/guide.md) · [Privacy](#privacy) · [Changelog](CHANGELOG.md) · [Report a bug](https://github.com/vayaan-labs/cache-maxxer/issues)
 
