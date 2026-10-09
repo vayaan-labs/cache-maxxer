@@ -36,6 +36,12 @@ Cache Maxxer adds a thin band right above your input box with the time left on t
 
 3. **Send a message.** The band shows up once your conversation has a cache, which is after your first reply. If Claude Code was already open, run `/reload-plugins` first.
 
+Or paste this prompt to your agent:
+
+```
+Install the Cache Maxxer plugin for Claude Code (https://github.com/vayaan-labs/cache-maxxer). Run `claude plugin marketplace add vayaan-labs/claude-plugins`, then `claude plugin install cache-maxxer@vayaan-labs`, check that `claude plugin list` shows it enabled, and then tell me to run /reload-plugins.
+```
+
 Press **More** for the session's numbers, the last 10 requests with any rebuild marked, and the latest rebuild with its cost and cause. Press **Keep warm** to have it ping just before the cache expires. Everything else, from the settings to the `/cache-maxxer` command, is in the [guide](docs/guide.md).
 
 ## What you get
