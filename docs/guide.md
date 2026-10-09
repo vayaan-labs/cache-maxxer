@@ -4,7 +4,7 @@ Everything the [README](../README.md) leaves out: how the cache works, what each
 
 ## Why the cache matters
 
-While the cache is warm, each request reads your conversation at a small fraction of the normal input price. Once it expires, the next message writes the whole conversation back in. At Anthropic's prices for Opus 5.5 ($4 per million tokens of plain input, $0.20 to read from the cache and $8 to write to an hour-long cache), a 180K token conversation costs about 4 cents to read and about $1.44 to write again after a lapse.
+While the cache is warm, each request reads your conversation at a small fraction of the normal input price. Once it expires, the next message writes the whole conversation back in. At Anthropic's prices for Opus 5.5 ($4 per million tokens of plain input, $0.20 to read from the cache, $5 to write to a five-minute cache and $8 to an hour-long one), reading the conversation from the cache costs 96% less than writing it again after a five-minute cache lapses, and 97.5% less after an hour-long one. That is the input side of each request; what Claude writes back is priced the same either way. A 180K token conversation costs about 4 cents to read and about $1.44 to write again after an hour-long cache lapses.
 
 A cache lives for either an hour or five minutes. Cache Maxxer uses your `ttl` setting if you set one, and otherwise reads the length from your session: the newest cache write in the session transcript, or the length Claude Code reports when you switch model. Until it has seen one it assumes an hour and says "1 hour cache, assumed".
 
