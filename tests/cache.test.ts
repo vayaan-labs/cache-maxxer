@@ -21,10 +21,26 @@ const idleCap = withOptions({ options: { ttl: '5m', idle_cap: '1h' }, timeoutMs:
 type Use = { read: number; written: number; uncached: number; output: number; model?: string }
 
 // The engine beneath the mod: a clock the test moves, a store in memory, toasts collected, a model
-// request that answers with whatever the test set, and a fork that counts its calls.
-async function boot($: Engine, on: On, transcript: { path: string; tail: string } = { path: '', tail: '' }) {
+// request that answers with whatever the test set, and a fork that counts its calls. A test that
+// passes `staleStore` gets a store that reads the price record as missing while `staleStore.isStale`
+// is set: what a separate process finds when it read the store before another process wrote it.
+async function boot($: Engine, on: On, transcript: { path: string; tail: string } = { path: '', tail: '' }, staleStore: { isStale: boolean } | null = null) {
   const clock = mock.clock(on, { now: T0 })
-  mock.store(on, {})
+  if (staleStore) {
+    const kept = new Map<string, unknown>()
+    on('store.get', (_$, e) => ({ value: staleStore.isStale && e.key === 'prices' ? undefined : kept.get(e.key) }) as never)
+    on('store.set', (_$, e) => {
+      kept.set(e.key, JSON.parse(JSON.stringify(e.value)))
+      return { value: undefined } as never
+    })
+    on('store.delete', (_$, e) => {
+      kept.delete(e.key)
+      return { value: undefined } as never
+    })
+    on('store.keys', () => ({ value: [...kept.keys()] }) as never)
+  } else {
+    mock.store(on, {})
+  }
   const toasts: string[] = []
   on('ui.toast', (_$, e) => {
     toasts.push(e.text)
@@ -78,9 +94,22 @@ async function boot($: Engine, on: On, transcript: { path: string; tail: string 
     page.calls += 1
     return { value: page.respond() } as never
   })
-  on('process.run', (_$, e) => ({
-    value: { exitCode: 0, stdout: e.argv[0] === '/usr/bin/find' ? transcript.path : transcript.tail, stderr: '' },
-  }) as never)
+  // The folders `mkdir` made, as the file system holds them: a second `mkdir` of one fails, as on disk.
+  const folders = new Set<string>()
+  on('process.run', (_$, e) => {
+    const [program, ...args] = e.argv
+    if (program === '/bin/mkdir') {
+      const path = args[args.length - 1]!
+      const isNew = !folders.has(path)
+      folders.add(path)
+      return { value: { exitCode: isNew || args[0] === '-p' ? 0 : 1, stdout: '', stderr: '' } } as never
+    }
+    if (program === '/bin/rmdir') {
+      folders.delete(args[0]!)
+      return { value: { exitCode: 0, stdout: '', stderr: '' } } as never
+    }
+    return { value: { exitCode: 0, stdout: program === '/usr/bin/find' ? transcript.path : transcript.tail, stderr: '' } } as never
+  })
   on('classic.SessionStart', () => ({}) as never)
   on('session.end', () => ({ sessionId: 'session-1' }) as never)
   on('session.start', () => ({ cwd: '/work' }))
@@ -286,9 +315,12 @@ test("Anthropic's price table is read by column, every row named", () => {
 })
 
 // The price page is asked for at most once a day, the day counted from the last time it was asked,
-// so a page that keeps failing is not asked again by every session that starts.
-test('the price page is asked for at most once a day, when it fails too', async ($, on) => {
-  const { clock, page } = await boot($, on)
+// so a page that keeps failing is not asked again by every session that starts, and sessions that
+// start together ask once between them.
+test('the price page is asked for at most once a day, when it fails and when sessions start together', async ($, on) => {
+  // Sessions that start together each read the store before any of them writes it (`staleStore`).
+  const store = { isStale: false }
+  const { clock, page } = await boot($, on, undefined, store)
   const settle = () => new Promise(resolve => setTimeout(resolve, 20))
   const start = async () => {
     await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
@@ -301,11 +333,18 @@ test('the price page is asked for at most once a day, when it fails too', async 
     await start()
     expect(page.calls, 'later sessions that day do not, though the page failed').toBe(1)
     await clock.advance(24 * 60 * MINUTE)
+    store.isStale = true
+    await start()
+    await start()
+    await start()
+    store.isStale = false
+    expect(page.calls, 'three sessions starting together a day later ask once').toBe(2)
+    await clock.advance(24 * 60 * MINUTE)
     page.respond = () => ({ status: 200, ok: true, headers: {}, text: PAGE })
     await start()
-    expect(page.calls, 'a day later it asks again').toBe(2)
+    expect(page.calls, 'a day later it asks again').toBe(3)
     await start()
-    expect(page.calls, 'and after a good read, not again that day').toBe(2)
+    expect(page.calls, 'and after a good read, not again that day').toBe(3)
   } finally {
     setLivePrices(null)
   }

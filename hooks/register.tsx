@@ -316,6 +316,9 @@ async function setKeepWarm($: EngineInterface, cfg: Cfg, change: boolean | 'togg
 // and a page that cannot be read or does not parse leaves it as it was. Never blocks the session.
 // The day counts from the last attempt, not the last success: the time is saved before the page is
 // asked for, so a page that keeps failing is still asked once a day, however many sessions start.
+// Sessions that start together all read the store before any of them writes it, so the store alone
+// cannot stop each of them asking: the one that may ask today is the one whose `mkdir` of today's
+// claim folder succeeds, which the file system grants to exactly one process.
 async function refreshPrices($: EngineInterface) {
   try {
     const stored = (await $.store.get('prices')) as { at?: unknown; entries?: unknown; triedAt?: unknown } | undefined
@@ -324,6 +327,7 @@ async function refreshPrices($: EngineInterface) {
     const triedAt = typeof stored?.triedAt === 'number' ? stored.triedAt : saved?.at
     const now = await $.clock.now()
     if (typeof triedAt === 'number' && now - triedAt < REFRESH_MS) return
+    if (!(await claimToday($, now))) return
     await $.store.set('prices', saved ? { at: saved.at, entries: saved.entries, triedAt: now } : { triedAt: now })
     const res = await $.http.fetch(PRICING_URL)
     const entries = res.ok ? parsePricing(res.text) : null
@@ -333,6 +337,24 @@ async function refreshPrices($: EngineInterface) {
   } catch {
     // The built-in table, or the last good one, stays in use
   }
+}
+
+// Claims today's read of the price page for this session: true only for the one process whose `mkdir`
+// of today's empty claim folder succeeds. A day is a UTC day. Folders of earlier days are removed. Any
+// failure (the folder cannot be made, `mkdir` cannot run) means no claim, so nobody asks rather than two.
+async function claimToday($: EngineInterface, now: number): Promise<boolean> {
+  const root = (await $.env.get('CLAUDE_CONFIG_DIR')) ?? `${(await $.env.get('HOME')) ?? ''}/.claude`
+  if (!root.startsWith('/')) return false
+  const dir = `${root}/cache-maxxer`
+  const today = Math.floor(now / REFRESH_MS)
+  await $.process.run(['/bin/mkdir', '-p', dir], { timeoutMs: 5_000 })
+  const claim = await $.process.run(['/bin/mkdir', `${dir}/price-read-${today}`], { timeoutMs: 5_000 })
+  if (claim.exitCode !== 0) return false
+  for (const entry of await $.fs.list(dir).catch(() => [])) {
+    const day = /^price-read-([0-9]+)$/.exec(entry.name)
+    if (day && Number(day[1]) < today) await $.process.run(['/bin/rmdir', `${dir}/${entry.name}`], { timeoutMs: 5_000 }).catch(() => undefined)
+  }
+  return true
 }
 
 async function compact($: EngineInterface) {

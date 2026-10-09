@@ -88,7 +88,7 @@ Cache Maxxer has four settings, each a choice from a short list. In a terminal, 
 
 ## What it runs on your machine
 
-To learn the cache length, while `ttl` is `auto`, it runs `find` to locate your session's transcript under your Claude config folder (`CLAUDE_CONFIG_DIR`, or `~/.claude`) and `tail` to read at most the last 256 KiB of it. It looks only at the cache-write token counts in what it reads. The keep-warm ping is "Reply with exactly one word: ok. Do not use any tools." sent over your conversation through Claude Code.
+To learn the cache length, while `ttl` is `auto`, it runs `find` to locate your session's transcript under your Claude config folder (`CLAUDE_CONFIG_DIR`, or `~/.claude`) and `tail` to read at most the last 256 KiB of it. It looks only at the cache-write token counts in what it reads. Before asking for the price page it runs `mkdir` to make an empty folder named for the day under `cache-maxxer` in the same config folder, and asks only if that folder was new, so sessions that start together ask once between them. Earlier days' folders are removed with `rmdir`. The keep-warm ping is "Reply with exactly one word: ok. Do not use any tools." sent over your conversation through Claude Code.
 
 ## Updating and removing
 
