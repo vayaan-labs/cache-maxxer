@@ -61,7 +61,9 @@ Run these two commands:
 claude plugin marketplace add vayaan-labs/plugins
 claude plugin install cache-maxxer@vayaan-labs
 Check that `claude plugin list` shows it enabled,
-then tell me to run /reload-plugins.
+then tell me to run /reload-plugins. If the claude
+command isn't found, tell me to add it from the
+Directory instead, as the README shows.
 ```
 
 Press **More** for the session's numbers, the last 10 requests with any rebuild marked, and the latest rebuild with its cost and cause. Press **Keep warm** to have it ping just before the cache expires. Everything else, from the settings to the `/cache-maxxer` command, is in the [guide](docs/guide.md).
