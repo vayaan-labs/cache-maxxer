@@ -83,7 +83,7 @@ Cache Maxxer has no server, account or analytics. It makes one network request o
 
 Two of its buttons send a request to Claude, the same place your messages already go, and each counts toward your usage like any other request. Keep warm and Warm now ask for a one-word reply over your conversation. Compact, which takes Warm now's place once the cache has expired, asks Claude Code to compact the conversation.
 
-On your machine, while the cache length is set to `auto`, it reads the end of your session's transcript file to learn how long the cache lives, looking only at the cache-write token counts in it. It saves four things in the plugin's own data: the keep-warm toggle, whether the detail is open, whether the desktop band is tucked away, and the last price table. Everything else lives in memory for the session.
+On your machine, while the cache length is set to `auto`, it reads the end of your session's transcript file to learn how long the cache lives, looking only at the cache-write token counts in it. It saves four things in the plugin's own data: the keep-warm toggle, whether the detail is open, whether the desktop band is tucked away, and the last price table with the time it last asked for the page. Everything else lives in memory for the session.
 
 ## Contributing
 

@@ -71,8 +71,13 @@ async function boot($: Engine, on: On, transcript: { path: string; tail: string 
   // Where the session's transcript is, as the mod finds it: one find, then the tail of the file.
   on('session.id', () => ({ value: 'session-1' }) as never)
   on('env.get', () => ({ value: undefined }) as never)
-  // The price page is never fetched in a test: the built-in table prices every request here.
-  on('http.fetch', () => ({ value: { status: 503, ok: false, headers: {}, text: '' } }) as never)
+  // The price page fails in a test unless the test says otherwise, so the built-in table prices every
+  // request here; each time it is asked for is counted.
+  const page = { calls: 0, respond: (): unknown => ({ status: 503, ok: false, headers: {}, text: '' }) }
+  on('http.fetch', () => {
+    page.calls += 1
+    return { value: page.respond() } as never
+  })
   on('process.run', (_$, e) => ({
     value: { exitCode: 0, stdout: e.argv[0] === '/usr/bin/find' ? transcript.path : transcript.tail, stderr: '' },
   }) as never)
@@ -91,7 +96,7 @@ async function boot($: Engine, on: On, transcript: { path: string; tail: string 
     for await (const chunk of step) void chunk
     await step.result
   }
-  return { clock, toasts, fork, request, surfaces }
+  return { clock, toasts, fork, request, surfaces, page }
 }
 
 // The command, as the person types it.
@@ -278,6 +283,32 @@ test("Anthropic's price table is read by column, every row named", () => {
     ['a negative price', [['claude-opus-5-5', { ...opusPrice, output: -1 }]]],
   ]
   for (const [name, entries] of damaged) expect(isPriceTable(entries), name).toBe(false)
+})
+
+// The price page is asked for at most once a day, the day counted from the last time it was asked,
+// so a page that keeps failing is not asked again by every session that starts.
+test('the price page is asked for at most once a day, when it fails too', async ($, on) => {
+  const { clock, page } = await boot($, on)
+  const settle = () => new Promise(resolve => setTimeout(resolve, 20))
+  const start = async () => {
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+    await settle()
+  }
+  try {
+    await settle()
+    expect(page.calls, 'the first session asks').toBe(1)
+    await start()
+    await start()
+    expect(page.calls, 'later sessions that day do not, though the page failed').toBe(1)
+    await clock.advance(24 * 60 * MINUTE)
+    page.respond = () => ({ status: 200, ok: true, headers: {}, text: PAGE })
+    await start()
+    expect(page.calls, 'a day later it asks again').toBe(2)
+    await start()
+    expect(page.calls, 'and after a good read, not again that day').toBe(2)
+  } finally {
+    setLivePrices(null)
+  }
 })
 
 // Dollars to the billionth, so float rounding in a sum never reads as a different price.

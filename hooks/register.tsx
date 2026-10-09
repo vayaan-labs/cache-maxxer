@@ -314,18 +314,22 @@ async function setKeepWarm($: EngineInterface, cfg: Cfg, change: boolean | 'togg
 // The price table Anthropic publishes, read at most once a day and kept in the plugin's store, so a
 // new model or a changed price is known without a new release. The last good table is used meanwhile,
 // and a page that cannot be read or does not parse leaves it as it was. Never blocks the session.
+// The day counts from the last attempt, not the last success: the time is saved before the page is
+// asked for, so a page that keeps failing is still asked once a day, however many sessions start.
 async function refreshPrices($: EngineInterface) {
   try {
-    const stored = (await $.store.get('prices')) as { at?: unknown; entries?: unknown } | undefined
+    const stored = (await $.store.get('prices')) as { at?: unknown; entries?: unknown; triedAt?: unknown } | undefined
     const saved = stored && typeof stored.at === 'number' && isPriceTable(stored.entries) ? stored : undefined
     if (saved) setLivePrices(saved.entries as PriceEntry[])
+    const triedAt = typeof stored?.triedAt === 'number' ? stored.triedAt : saved?.at
     const now = await $.clock.now()
-    if (saved && now - (saved.at as number) < REFRESH_MS) return
+    if (typeof triedAt === 'number' && now - triedAt < REFRESH_MS) return
+    await $.store.set('prices', saved ? { at: saved.at, entries: saved.entries, triedAt: now } : { triedAt: now })
     const res = await $.http.fetch(PRICING_URL)
     const entries = res.ok ? parsePricing(res.text) : null
     if (!entries) return
     setLivePrices(entries)
-    await $.store.set('prices', { at: now, entries })
+    await $.store.set('prices', { at: now, entries, triedAt: now })
   } catch {
     // The built-in table, or the last good one, stays in use
   }

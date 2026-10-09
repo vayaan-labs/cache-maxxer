@@ -36,7 +36,7 @@ In the Claude desktop app the band is drawn for a window: the countdown as a lar
 
 ## Prices
 
-Dollar figures use the price table Anthropic publishes, matched by model id. Cache Maxxer reads it when Claude Code starts, at most once a day, so a new model or a price change shows up without an update; until that read has worked it uses the copy of the same table it ships with, which covers every current Claude model. A model priced by prompt length, such as Haiku 5.5, is priced at the rate for each request's own size. For a model in neither table Cache Maxxer shows tokens only and never guesses a price.
+Dollar figures use the price table Anthropic publishes, matched by model id. Cache Maxxer reads it when Claude Code starts, at most once a day, so a new model or a price change shows up without an update. A read that fails is tried again the next day, not at every start, and until a read has worked Cache Maxxer uses the copy of the same table it ships with, which covers every current Claude model. A model priced by prompt length, such as Haiku 5.5, is priced at the rate for each request's own size. For a model in neither table Cache Maxxer shows tokens only and never guesses a price.
 
 ## Cache breaks
 
