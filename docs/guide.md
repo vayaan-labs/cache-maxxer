@@ -12,7 +12,7 @@ A cache lives for either an hour or five minutes. Cache Maxxer uses your `ttl` s
 
 The band sits in a thin frame above the input box and is one line: a status dot, a countdown with a bar that drains, how long your cache lives, and two hit rates, the last request's and the whole session's, such as "hit 99.86% last request · 94.01% this session". A rate is cut, never rounded up, so one short of 100% never reads 100.00%. Beside it are Keep warm, Warm now (Compact once the cache has expired) and More.
 
-The countdown is green while the cache is warm, amber in the last sixth of its life and red in the last thirtieth, where the band also says "expiring soon", and grey once it has expired. Once it has expired the band says what your next message will re-write and roughly what that costs. The colors are your Claude Code theme's own.
+The countdown is green while the cache is warm and grey once it has expired. In the last sixth of the cache's life it turns amber and the band says "expiring soon", and in the last thirtieth it turns red. Once it has expired the band says what your next message will re-write and roughly what that costs. The colors are your Claude Code theme's own.
 
 Press More, or run `/cache-maxxer`, and the band opens upward, keeping its first line at the bottom next to the input box:
 
