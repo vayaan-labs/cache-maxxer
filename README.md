@@ -8,11 +8,7 @@
 
 [**Install**](#get-started) · [Guide](docs/guide.md) · [Privacy](#privacy) · [Changelog](CHANGELOG.md) · [Report a bug](https://github.com/vayaan-labs/cache-maxxer/issues)
 
-[![CI](https://github.com/vayaan-labs/cache-maxxer/actions/workflows/ci.yml/badge.svg)](https://github.com/vayaan-labs/cache-maxxer/actions/workflows/ci.yml)
-[![Latest release](https://img.shields.io/github/v/release/vayaan-labs/cache-maxxer?style=flat-square&label=release)](https://github.com/vayaan-labs/cache-maxxer/releases/latest)
-![Claude Code 2.1.289 or later](https://img.shields.io/badge/Claude_Code-2.1.289+-d97757?style=flat-square)
-[![MIT licence](https://img.shields.io/github/license/vayaan-labs/cache-maxxer?style=flat-square)](LICENSE)
-[![GitHub stars](https://img.shields.io/github/stars/vayaan-labs/cache-maxxer?style=flat-square)](https://github.com/vayaan-labs/cache-maxxer/stargazers)
+[![CI](https://github.com/vayaan-labs/cache-maxxer/actions/workflows/ci.yml/badge.svg)](https://github.com/vayaan-labs/cache-maxxer/actions/workflows/ci.yml) [![Latest release](https://img.shields.io/github/v/release/vayaan-labs/cache-maxxer?style=flat-square&label=release)](https://github.com/vayaan-labs/cache-maxxer/releases/latest) ![Claude Code 2.1.289 or later](https://img.shields.io/badge/Claude_Code-2.1.289+-d97757?style=flat-square) [![MIT licence](https://img.shields.io/github/license/vayaan-labs/cache-maxxer?style=flat-square)](LICENSE) [![GitHub stars](https://img.shields.io/github/stars/vayaan-labs/cache-maxxer?style=flat-square)](https://github.com/vayaan-labs/cache-maxxer/stargazers)
 
 ![Cache Maxxer in the Claude desktop app: a 58:08 countdown on a one-hour cache, hit rates of 99.91% for the last request and 99.58% for the session, and the Keep warm, Warm now, More and Hide buttons.](assets/band-desktop-closed-dark.png)
 
