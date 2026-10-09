@@ -22,10 +22,10 @@ Cache Maxxer adds a thin band right above your input box with the time left on t
 
 ## Get started
 
-1. **Add the Vayaan Labs catalogue.** In the Claude desktop app, open the Directory, choose Plugins, press + and choose Add marketplace, then Add from a repository, and enter `vayaan-labs/claude-plugins`. In a terminal:
+1. **Add the Vayaan Labs catalogue.** In the Claude desktop app, open the Directory, choose Plugins, press + and choose Add marketplace, then Add from a repository, and enter `vayaan-labs/plugins`. In a terminal:
 
    ```
-   claude plugin marketplace add vayaan-labs/claude-plugins
+   claude plugin marketplace add vayaan-labs/plugins
    ```
 
 2. **Install Cache Maxxer.** Find it in the Vayaan Labs catalogue and install it, or in a terminal:
@@ -42,7 +42,7 @@ Or paste this prompt to your agent:
 Install the Cache Maxxer plugin for Claude Code
 (https://github.com/vayaan-labs/cache-maxxer).
 Run these two commands:
-claude plugin marketplace add vayaan-labs/claude-plugins
+claude plugin marketplace add vayaan-labs/plugins
 claude plugin install cache-maxxer@vayaan-labs
 Check that `claude plugin list` shows it enabled,
 then tell me to run /reload-plugins.
