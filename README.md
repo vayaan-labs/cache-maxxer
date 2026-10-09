@@ -1,87 +1,108 @@
+<div align="center">
+
+![Cache Maxxer icon: a green countdown ring around a dot](assets/icon.svg)
+
 # Cache Maxxer
 
-A Claude Code mod for the prompt cache.
+**A Claude Code mod that keeps your cache warm, so you pay 96% less to re-read your conversation.**
 
-The cache decides most of what a long session costs and how fast it answers. While it is warm, each request reads your whole conversation at a small fraction of the normal input price. Once its time runs out (an hour on a subscription, five minutes on many API keys) the next message pays to write the whole conversation again. Cache Maxxer shows where the cache stands, explains every time it broke, and can keep it warm on purpose.
+[**Install**](#get-started) · [Guide](docs/guide.md) · [Privacy](#privacy) · [Changelog](CHANGELOG.md) · [Report a bug](https://github.com/vayaan-labs/cache-maxxer/issues)
 
-## What it shows
+[![CI](https://github.com/vayaan-labs/cache-maxxer/actions/workflows/ci.yml/badge.svg)](https://github.com/vayaan-labs/cache-maxxer/actions/workflows/ci.yml) [![Latest release](https://img.shields.io/github/v/release/vayaan-labs/cache-maxxer?style=flat-square&label=release)](https://github.com/vayaan-labs/cache-maxxer/releases/latest) ![Claude Code 2.1.289 or later](https://img.shields.io/badge/Claude_Code-2.1.289+-d97757?style=flat-square) [![MIT licence](https://img.shields.io/github/license/vayaan-labs/cache-maxxer?style=flat-square)](LICENSE) [![GitHub stars](https://img.shields.io/github/stars/vayaan-labs/cache-maxxer?style=flat-square)](https://github.com/vayaan-labs/cache-maxxer/stargazers)
 
-A band sits above the prompt as soon as the conversation has a cache. From left to right it has a status dot, a countdown to expiry with a track that drains as time passes, the hit rate of the last request and of the whole session ("97% now · 94% session"), the size of the context the next message sends ("182K ctx"), what the session has read from and written to the cache ("3.1M read · 410K written"), what the cache has saved in dollars ("saved ~$11.80"), and a small chart of the last 24 requests. The countdown is green while the cache is warm, amber in the last sixth of its life, red in the last thirtieth, and grey once it has expired, at which point the band says what the next message will re-write and roughly what that costs.
+![Cache Maxxer in the Claude desktop app with keep warm on: the countdown runs down into amber with "Expiring soon", the cache is warmed automatically with a "Cache warmed" notice showing the tokens read and the cost saved, and a fresh hour starts.](assets/band-keep-warm.gif)
 
-In the Code tab of the Desktop app the band is a drawn row with real buttons beside it, and a second line when one cannot hold everything. In the terminal it is one line of text with the buttons under it. Whatever other mods draw in the same place stays, shown under the band. When there is less room, pieces drop out in a fixed order: the chart, savings, totals, the track, the context size, then the session hit rate. The countdown and the last request's hit rate always stay.
+*Keep warm in the Claude desktop app: the cache is warmed just before it expires, and a fresh hour starts.*
 
-The buttons are Keep warm (on or off), Warm now while the cache is warm, Compact once it has expired, and Details.
+</div>
 
-Details opens the pane, which `/cache` opens too. It has the countdown large with the cache length and state, a summary of the session, a stacked chart of the last 48 requests (read, written, uncached, with breaks marked), the last eight breaks with their time, size, cost and cause, and the keep-warm controls.
+Claude Code keeps a saved copy of your conversation, the prompt cache, so each new message doesn't pay full price to re-read everything before it. That copy quietly expires after five minutes or an hour without a message, or when the agent is idle, and your next one pays to write the whole conversation again: slower, and extremely expensive.
 
-Whenever the cache is rebuilt you get one notice, such as "Cache rebuilt · 182K tokens re-written · expired after 63m idle". The cause is one of: the cache expired while you were away, the model was switched, the conversation was compacted, `/clear` ran, or otherwise the system prompt, tools or MCP servers changed. A cache break is a request that wrote more than 20K tokens and read less than half of what the request before it had cached, which means the cached start of the conversation was lost. A big new message sent on top of a cache that was read, such as a large file early in a session, is not a break, and the first request of a fresh session has nothing to lose, so it is not counted as one.
+Cache Maxxer adds a thin band right above your input box with the time left on that cache and your hit rate, which is the share of each request read from the cache instead of paid for again. When the cache does get rebuilt, it tells you why. And if you want, it keeps the cache alive while you step away (saving you money when you return!).
 
-With keep warm off, you get one notice when the cache is about to run out ("Cache expires in 4m · Warm now to keep it").
+## Get started
 
-Dollar figures are known for Opus 5.5, Sonnet 5.5 and Haiku 4.5, matched by model id. For any other model the mod shows tokens only and never guesses a price.
+### In the Claude desktop app
 
-## Keep warm
+1. **Add the Vayaan Labs catalogue.** Open the Directory, choose Plugins, press + and choose Add marketplace, then Add from a repository, and enter `vayaan-labs/plugins`.
 
-Keep warm is off by default. When it is on, the session is idle and the cache is about to run out, the mod sends one very short request over your conversation asking for a one-word reply. That request reads the cached context, which resets the cache's timer, and the mod notes the ping and what it cost. It sends one at a time, never while Claude is working, and does not retry in a loop if one fails: it tells you why and leaves that expiry alone. Warm now does the same once, on demand.
+   ![The Add marketplace dialog in the Claude desktop app, with two choices: Browse Anthropic sources, and Add from a repository, which syncs a plugin marketplace from a GitHub repository or Git URL.](assets/add-marketplace.png)
 
-A ping costs about the size of your context times the cache-read price. For a 180K token Opus conversation that is a few cents, against well over a dollar to re-write the same context after a lapse. With a five minute cache it pings every few minutes, so it adds up much faster than with an hour cache. If the ping finds the cache had already lapsed, it rebuilt it instead: the notice says so with what was written and what it cost, the cache is warm again, and the pane (and the band's keep-warm note) count it as a rebuild rather than as a ping that kept the cache warm. Keep warm stops once you have not sent anything for the idle cap (three hours unless you change it), and the band says so, so a session you walked away from does not keep spending.
+2. **Install Cache Maxxer.** Find it in the Vayaan Labs catalogue under Plugins and install it.
 
-## Commands
+3. **Send a message.** The band shows up above the input box once your conversation has a cache, which is after your first reply. If it doesn't, run `/reload-plugins`.
 
-`/cache` opens the pane, or prints a one-line summary where nothing can be drawn (a `claude -p` run). `/cache warm` sends one ping. `/cache keep on` and `/cache keep off` set the toggle, which is remembered as the default for new sessions. They all run at once, even while Claude is working.
+   ![The Cache Maxxer band in the Claude desktop app: a large 58:08 countdown over a draining bar, a one-hour cache, hit rates of 99.91% and 99.58% with rings, and the Keep warm, Warm now, More and Hide buttons.](assets/band-desktop-closed-dark.png)
 
-## Settings
+### In a terminal
 
-Three settings, each a choice from a short list. In a session, open `/plugin`, go to the Installed tab and choose Configure options on Cache Maxxer. Or put them in your settings file, using the plugin's id (`cache-maxxer@vayaan-labs` when installed from the Vayaan Labs marketplace, `cache-maxxer@inline` when loaded with `--plugin-dir`):
+1. **Add the Vayaan Labs catalogue.**
 
-```json
-{
-  "pluginConfigs": {
-    "cache-maxxer@vayaan-labs": { "ttl": "1h", "lead": "auto", "idle_cap": "3h" }
-  }
-}
-```
+   ```
+   claude plugin marketplace add vayaan-labs/plugins
+   ```
 
-`ttl` is how long the cache lives: `auto` (the default) reads it from the newest cache write in your session transcript after each turn and assumes an hour, shown as "1h?", until it knows; `1h` and `5m` fix it. `lead` is how long before expiry the notice and the ping come: `auto` is 4 minutes for an hour cache and 40 seconds for five minutes, or pick 1, 2, 4 or 8 minutes (never more than half the cache's life). `idle_cap` is how long you can be idle before keep warm stops: 1h, 3h (the default), 8h or none.
+2. **Install Cache Maxxer.**
 
-The pane has pickers for the lead time and idle cap too. What you pick there applies to the current session only and starts again from the settings above after `/clear`.
+   ```
+   claude plugin install cache-maxxer@vayaan-labs
+   ```
 
-## Install
+3. **Send a message.** The band shows up once your conversation has a cache, which is after your first reply. If Claude Code was already open, run `/reload-plugins` first.
 
-To try it for one session:
+   ![Cache Maxxer in a terminal: a 59:47 countdown with a draining bar, a one-hour cache, hit rates of 95.33% and 68.19%, and the Keep warm, Warm now and More buttons.](assets/band.png)
 
-```
-claude --plugin-dir /path/to/cache-maxxer
-```
-
-To have it in every session, including the Desktop app, add the folder to `CLAUDE_CODE_PLUGIN_DIRS` in the `env` block of `~/.claude/settings.json`:
-
-```json
-{
-  "env": { "CLAUDE_CODE_PLUGIN_DIRS": "/path/to/cache-maxxer" }
-}
-```
-
-Once it is published in the Vayaan Labs catalogue, install it from there:
+### Or paste this prompt to your agent
 
 ```
-claude plugin marketplace add vayaan-labs/claude-plugins
+Install the Cache Maxxer plugin for Claude Code
+(https://github.com/vayaan-labs/cache-maxxer).
+Run these two commands:
+claude plugin marketplace add vayaan-labs/plugins
 claude plugin install cache-maxxer@vayaan-labs
+Check that `claude plugin list` shows it enabled,
+then tell me to run /reload-plugins. If the claude
+command isn't found, tell me to add it from the
+Directory instead, as the README shows.
 ```
 
-A plugin installed from the catalogue reaches sessions that are already open after `/reload-plugins`; the settings entry applies to sessions you start afterwards.
+Press **More** for the session's numbers, the last 10 requests with any rebuild marked, and the latest rebuild with its cost and cause. Press **Keep warm** to have it ping just before the cache expires. Everything else, from the settings to the `/cache-maxxer` command, is in the [guide](docs/guide.md).
 
-## What it can reach
+## What you get
 
-A mod runs with your permissions. This one reads the end of your session transcript (the last 256 KB, with `find` and `tail`) to learn the cache length, asks the model for the pings, can start a compaction when you press Compact, and keeps the keep-warm toggle in its own store file. It makes no network requests of its own and never reads the whole transcript.
+- **A countdown you can see.** Time left on the cache, a bar that drains, and a colour that turns amber, then red, as expiry gets close.
+- **Your real cache hit rate.** The last request's and the whole session's, to two decimals and never rounded up, so 99.86% doesn't show as 100%.
+- **Every rebuild explained.** One notice saying how much was re-written and why: you were away too long, you switched model, compacted or cleared, or Claude Code's setup changed (its system prompt, tools or MCP servers).
+- **Keep warm.** One tiny request just before expiry resets the timer for a few cents. It stops after three hours without a message from you, or whatever limit you set.
+- **What the cache is worth.** Tokens read from the cache and written to it, what the writes cost and what the reads saved, priced from Anthropic's own price table, which it checks once a day so a new model gets prices as soon as Anthropic lists it.
+- **Terminal and desktop app.** A one-line band in the terminal. In the Claude desktop app, a drawn band with a large countdown, hit-rate rings and native menus, which matches your light or dark appearance and fits a narrow window.
 
-## Development
+<div align="center">
 
-```
-claude plugin validate --strict .claude-plugin/plugin.json
-claude plugin test
-```
+![The desktop band opened with keep warm on: 547 requests this session at a 99.58% hit rate, about $10 spent writing the cache and about $1,136 saved by reading it, the last 10 requests with no rebuild, the last rebuild after compacting, and the keep-warm settings with what its three pings saved.](assets/band-desktop-keep-warm-open-dark.png)
 
-The type declarations Claude Code writes into `.claude-plugin/types/` are not committed.
+*Opened with More and keep warm on: what the cache cost this session, what it saved, and what the pings saved.*
 
-Tested with Claude Code 2.1.287.
+</div>
+
+## Supported
+
+- Claude Code 2.1.289 or later, in the terminal and in the Claude desktop app, on macOS.
+- Every current Claude model. Prices come from Anthropic's public price table; a model not in it gets token counts and no dollar figures.
+- One-hour and five-minute caches, read from your session or set by you.
+
+## Privacy
+
+Cache Maxxer has no server, account or analytics. It makes one network request of its own: it reads Anthropic's public pricing page (`platform.claude.com/docs/en/about-claude/pricing.md`) at most once a day, sending nothing about you or your session. Set `live_prices` to `off` ([settings](docs/guide.md)) and it never does.
+
+Two of its buttons send a request to Claude, the same place your messages already go, and each counts toward your usage like any other request. Keep warm and Warm now ask for a one-word reply over your conversation. Compact, which takes Warm now's place once the cache has expired, asks Claude Code to compact the conversation.
+
+On your machine, while the cache length is set to `auto`, it reads the end of your session's transcript file to learn how long the cache lives, looking only at the cache-write token counts in it. It saves four things in the plugin's own data: the keep-warm toggle, whether the detail is open, whether the desktop band is tucked away, and the last price table with the time it last asked for the page. So that sessions starting together ask for the page only once, it also keeps one empty folder for the current day in `cache-maxxer` under your Claude config folder. Everything else lives in memory for the session.
+
+## Contributing
+
+Found a bug? [Open an issue](https://github.com/vayaan-labs/cache-maxxer/issues). Want to send a change? [CONTRIBUTING.md](CONTRIBUTING.md) has the two checks to run and how pull requests are merged. To report a security problem privately, see [SECURITY.md](SECURITY.md).
+
+## Licence
+
+MIT. Built by [@YaanFPV](https://github.com/YaanFPV).

@@ -11,8 +11,16 @@ export function fmtTokens(n: number): string {
 export function fmtUsd(n: number): string {
   if (n < 0) return `-${fmtUsd(-n)}`
   if (n >= 100) return `$${Math.round(n)}`
-  if (n > 0 && n < 0.01) return '<$0.01'
+  if (n > 0 && n < 0.01) return '< $0.01'
   return `$${n.toFixed(2)}`
+}
+
+// A dollar figure that is an estimate: ~$0.31, < $0.01 for a smaller cost, a loss as -$0.06,
+// and a loss too small to show in cents as ~$0.00.
+export function fmtApprox(n: number): string {
+  if (n < 0) return n > -0.005 ? '~$0.00' : `-$${-n >= 100 ? Math.round(-n) : (-n).toFixed(2)}`
+  if (n > 0 && n < 0.01) return '< $0.01'
+  return `~${fmtUsd(n)}`
 }
 
 // mm:ss, with two-digit minutes for an hour-long entry so the band keeps its width.
@@ -36,4 +44,7 @@ export function fmtLocalTime(ms: number): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
-export const pct = (part: number, whole: number): number => (whole > 0 ? Math.round((part / whole) * 100) : 0)
+export const pct = (part: number, whole: number): number => (whole > 0 ? (part / whole) * 100 : 0)
+
+// A share to two decimals, cut rather than rounded, so a rate short of 100% never reads 100.00%.
+export const fmtPct = (n: number): string => `${(Math.floor(n * 100 + 1e-9) / 100).toFixed(2)}%`

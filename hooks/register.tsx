@@ -1,19 +1,21 @@
 import { atom, read, update } from 'claude-code'
 import type { ElementTable, EngineInterface, PluginOptions, Register, Timer, TurnUsage } from 'claude-code'
 
-import { desktopBand, terminalBand, type Actions } from './band'
-import { fmtTokens, fmtUsd } from './format'
+import type { CacheSettings } from '../types'
+
+import { terminalBand, type Actions } from './band'
+import { desktopBand } from './desktop'
+import { fmtApprox, fmtTokens } from './format'
 import { applyRequest, DEFAULT_SETTINGS, EMPTY_CACHE, EMPTY_PINGS, EMPTY_TOTALS, type Pending } from './model'
-import { desktopPane, terminalPane, type PaneActions } from './pane'
-import { requestCostUsd } from './pricing'
+import { isPriceTable, parsePricing, PRICING_URL, REFRESH_MS } from './live-prices'
+import { keptWarmUsd, requestCostUsd, setLivePrices, type PriceEntry } from './pricing'
 import { idleCapMs, leadLabel, leadMs, parseTtl, ttlInfo } from './ttl'
 import { makeView, summaryText, type View } from './view'
 
 // Cache Maxxer shows the conversation's prompt cache: how long it has left, how well it is hitting,
 // why it broke, and (when asked) keeps it warm with a short request before it lapses.
 
-const PANE_ID = 'cache-maxxer'
-const PANE = { id: PANE_ID, title: 'Cache Maxxer', focus: true, closeOnEscape: true } as const
+const COMMAND = 'cache-maxxer'
 
 // Asks for one word so the reply costs next to nothing; the request is there to read the cache.
 const PING_PROMPT = 'Reply with exactly one word: ok. Do not use any tools.'
@@ -22,7 +24,7 @@ const TAIL_BYTES = 262_144
 const RECHECK_MS = 10 * 60_000
 const RETRY_MS = 15_000
 
-// What the band and the pane draw. A value here survives a reload of the module; /clear, /resume
+// What the band draws. A value here survives a reload of the module; /clear, /resume
 // and /branch put every one back to its default (a /clear keeps only what the cache last held).
 const cacheAtom = atom({ plugin: 'cache-maxxer', key: 'cache' } as const, EMPTY_CACHE)
 const historyAtom = atom({ plugin: 'cache-maxxer', key: 'history' } as const, [])
@@ -32,9 +34,17 @@ const settingsAtom = atom({ plugin: 'cache-maxxer', key: 'settings' } as const, 
 const pingsAtom = atom({ plugin: 'cache-maxxer', key: 'pings' } as const, EMPTY_PINGS)
 const activityAtom = atom({ plugin: 'cache-maxxer', key: 'activity' } as const, 0)
 const pausedAtom = atom({ plugin: 'cache-maxxer', key: 'paused' } as const, '')
+const pickerAtom = atom({ plugin: 'cache-maxxer', key: 'picker' } as const, '')
+const expandedAtom = atom({ plugin: 'cache-maxxer', key: 'expanded' } as const, false)
 const tickAtom = atom({ plugin: 'cache-maxxer', key: 'tick' } as const, 0)
+const pingingAtom = atom({ plugin: 'cache-maxxer', key: 'pinging' } as const, false)
+const noticeAtom = atom({ plugin: 'cache-maxxer', key: 'notice' } as const, { text: '', until: 0 })
+const hiddenAtom = atom({ plugin: 'cache-maxxer', key: 'hidden' } as const, false)
 
-type Cfg = { ttl: string; lead: string; idleCap: string }
+// How long the Desktop band shows a notice.
+const NOTICE_MS = 8000
+
+type Cfg = { ttl: string; lead: string; idleCap: string; livePrices: boolean }
 
 const pick = (value: unknown, allowed: readonly string[], fallback: string) =>
   typeof value === 'string' && allowed.includes(value) ? value : fallback
@@ -43,6 +53,7 @@ const readCfg = (options: PluginOptions): Cfg => ({
   ttl: pick(options.ttl, ['auto', '1h', '5m'], 'auto'),
   lead: pick(options.lead, ['auto', '1m', '2m', '4m', '8m'], 'auto'),
   idleCap: pick(options.idle_cap, ['1h', '3h', '8h', 'none'], '3h'),
+  livePrices: pick(options.live_prices, ['on', 'off'], 'on') === 'on',
 })
 
 // What the hooks share between events. A reload of the module starts it over.
@@ -64,8 +75,10 @@ const rt = {
 async function viewOf($: EngineInterface, cfg: Cfg): Promise<View> {
   // Reading the tick subscribes the drawing to it, so the countdown redraws as it moves.
   await read($, tickAtom)
+  const now = await $.clock.now()
+  const notice = await read($, noticeAtom)
   return makeView({
-    now: await $.clock.now(),
+    now,
     ttlSetting: cfg.ttl,
     cache: await read($, cacheAtom),
     history: await read($, historyAtom),
@@ -74,7 +87,27 @@ async function viewOf($: EngineInterface, cfg: Cfg): Promise<View> {
     settings: await read($, settingsAtom),
     pings: await read($, pingsAtom),
     paused: await read($, pausedAtom),
+    picker: await read($, pickerAtom),
+    expanded: await read($, expandedAtom),
+    isPinging: await read($, pingingAtom),
+    notice: notice.until > now ? notice.text : '',
+    hidden: await read($, hiddenAtom),
   })
+}
+
+// ---- Telling the person ----
+
+// What Cache Maxxer has to say goes where the person is looking. The Desktop app stacks a plugin's
+// notices at its window's corner, away from this session's pane in a split, so there the band says
+// it for a few seconds instead; every other surface, the terminal included, gets the notice.
+async function notify($: EngineInterface, text: string) {
+  const surfaces = await $.session.surfaces()
+  if (surfaces.length === 0 || surfaces.some(s => s !== 'desktop')) $.ui.toast(text)
+  if (!surfaces.includes('desktop')) return
+  const until = (await $.clock.now()) + NOTICE_MS
+  await update($, noticeAtom, () => ({ text, until }))
+  // The countdown's ticks redraw the band; with no cache ticking, one more redraw takes the line away.
+  $.clock.after(NOTICE_MS, () => void update($, tickAtom, t => t + 1))
 }
 
 // ---- The cache's life ----
@@ -100,11 +133,15 @@ async function noteRequest($: EngineInterface, cfg: Cfg, startedAt: number, usag
   await update($, historyAtom, () => next.history)
   await update($, totalsAtom, () => next.totals)
   await update($, breaksAtom, () => next.breaks)
+  // A request that wrote may have put its split in the transcript: look again at the next tick.
+  if (usage.cache_creation_input_tokens > 0) rt.lookup.at = 0
   startTicker($, cfg)
-  if (brk) $.ui.toast(`Cache rebuilt · ${fmtTokens(brk.written)} tokens re-written · ${brk.cause}`)
+  if (brk) await notify($, `Cache rebuilt · ${fmtTokens(brk.written)} tokens re-written · ${brk.cause}`)
 }
 
-// Reads how long an entry lives from the newest cache write in the session transcript.
+// Reads how long an entry lives from the newest cache write in the session transcript. The transcript
+// may not hold the write yet when a turn ends, so the ticker asks again (at most every RETRY_MS)
+// until it has been seen.
 async function learnTtl($: EngineInterface, cfg: Cfg) {
   if (cfg.ttl !== 'auto') return
   const now = await $.clock.now()
@@ -147,6 +184,7 @@ function stopTicker() {
 async function tick($: EngineInterface, cfg: Cfg) {
   const cache = await read($, cacheAtom)
   if (cache.startedAt === 0) return stopTicker()
+  if (cfg.ttl === 'auto' && cache.ttlMs === null) void learnTtl($, cfg)
   const now = await $.clock.now()
   const ttl = ttlInfo(cfg.ttl, cache.ttlMs).ms
   const left = cache.startedAt + ttl - now
@@ -160,7 +198,7 @@ async function tick($: EngineInterface, cfg: Cfg) {
   if (!settings.keepWarm) {
     if (rt.warnedFor !== cache.startedAt) {
       rt.warnedFor = cache.startedAt
-      $.ui.toast(`Cache expires in ${leadLabel(lead)} · Warm now to keep it`)
+      await notify($, `Cache expires in ${leadLabel(lead)} · Warm now to keep it`)
     }
     return
   }
@@ -173,14 +211,17 @@ async function tick($: EngineInterface, cfg: Cfg) {
   const result = await ping($, cfg)
   if (!result.ok) {
     rt.skippedFor = cache.startedAt
-    $.ui.toast(`Keep warm skipped: ${result.reason}`)
-  } else if (result.hasLapsed) {
-    $.ui.toast(pingText(result))
+    await notify($, `Keep warm skipped: ${result.reason}`)
+  } else {
+    await notify($, pingText(result))
   }
 }
 
+// Why a ping did not go out while Claude is replying: a turn reads the cache itself.
+const BUSY = 'Claude is working'
+
 type PingResult =
-  | { ok: true; read: number; written: number; costUsd: number | null; hasLapsed: boolean }
+  | { ok: true; read: number; written: number; costUsd: number | null; savedUsd: number | null; hasLapsed: boolean }
   | { ok: false; reason: string }
 
 // One short request over the conversation. Its cache read restarts the entry's life from the
@@ -189,13 +230,14 @@ type PingResult =
 // that kept it warm.
 async function ping($: EngineInterface, cfg: Cfg): Promise<PingResult> {
   if (rt.isPinging) return { ok: false, reason: 'a ping is already running' }
-  if (rt.isTurnRunning) return { ok: false, reason: 'Claude is working' }
+  if (rt.isTurnRunning) return { ok: false, reason: BUSY }
   const cache = await read($, cacheAtom)
   const startedAt = await $.clock.now()
   const ttl = ttlInfo(cfg.ttl, cache.ttlMs).ms
   if (cache.startedAt === 0 || cache.startedAt + ttl <= startedAt) return { ok: false, reason: 'the cache has already expired' }
 
   rt.isPinging = true
+  await update($, pingingAtom, () => true)
   try {
     const r = await $.model.fork({ prompt: PING_PROMPT })
     if (!('usage' in r)) return { ok: false, reason: 'nothing has been said in this conversation yet' }
@@ -223,55 +265,129 @@ async function ping($: EngineInterface, cfg: Cfg): Promise<PingResult> {
       isPriced: p.isPriced || costUsd !== null,
     }))
     startTicker($, cfg)
-    return { ok: true, read: usage.cache_read_input_tokens, written: usage.cache_creation_input_tokens, costUsd, hasLapsed }
+    const savedUsd = keptWarmUsd(model, usage.cache_read_input_tokens, ttl)
+    return { ok: true, read: usage.cache_read_input_tokens, written: usage.cache_creation_input_tokens, costUsd, savedUsd, hasLapsed }
   } catch (error) {
     return { ok: false, reason: error instanceof Error ? error.message : String(error) }
   } finally {
     rt.isPinging = false
+    await update($, pingingAtom, () => false)
   }
 }
 
+// What the person is told about a ping, in plain words. A ping that kept the cache warm says what it
+// read and what that saved, the same as the keep-warm row: those tokens at the write price less the
+// read price. A rebuild is named as one, with what it cost.
 const pingText = (r: PingResult) => {
+  // A turn reads the cache on its own, so a press mid-turn has nothing to do, and says so lightly.
+  if (!r.ok && r.reason === BUSY) return 'Claude is working bro. No point warming cache 😎'
   if (!r.ok) return `Could not warm the cache: ${r.reason}`
-  const cost = r.costUsd === null ? '' : ` · ~${fmtUsd(r.costUsd)}`
-  return r.hasLapsed
-    ? `The cache had already lapsed; the ping rebuilt it · ${fmtTokens(r.written)} tokens written${cost}`
-    : `Cache warmed · ${fmtTokens(r.read)} tokens read${cost}`
+  if (r.hasLapsed) {
+    const cost = r.costUsd === null ? '' : ` · ${fmtApprox(r.costUsd)}`
+    return `The cache had already expired, so the background request rebuilt it · ${fmtTokens(r.written)} tokens written, timer restarted${cost}`
+  }
+  return `Cache warmed · ${fmtTokens(r.read)} tokens read${r.savedUsd === null ? '' : ` · cost saved ${fmtApprox(r.savedUsd)}`}`
 }
 
+// A press while a ping is on its way does nothing: the button already says Warming….
 async function warmNow($: EngineInterface, cfg: Cfg) {
-  $.ui.toast(pingText(await ping($, cfg)))
+  if (rt.isPinging) return
+  await notify($, pingText(await ping($, cfg)))
 }
 
-async function setKeepWarm($: EngineInterface, cfg: Cfg, isOn: boolean) {
-  await update($, settingsAtom, s => ({ ...s, keepWarm: isOn }))
-  await $.store.set('keepWarm', isOn)
+// The one place Keep warm changes, whichever button or command asks. A toggle flips the setting
+// where it stands now, so it never works from a stale reading; the pickers close with it.
+async function setKeepWarm($: EngineInterface, cfg: Cfg, change: boolean | 'toggle') {
+  const next = await update($, settingsAtom, s => ({ ...s, keepWarm: change === 'toggle' ? !s.keepWarm : change }))
+  await $.store.set('keepWarm', next.keepWarm)
   await update($, pausedAtom, () => '')
+  await update($, pickerAtom, () => '')
   rt.skippedFor = 0
-  if (isOn) {
+  if (next.keepWarm) {
     const now = await $.clock.now()
     await update($, activityAtom, () => now)
     startTicker($, cfg)
   }
+  return next.keepWarm
 }
 
-async function toggleKeepWarm($: EngineInterface, cfg: Cfg) {
-  await setKeepWarm($, cfg, !(await read($, settingsAtom)).keepWarm)
+// The price table Anthropic publishes, read at most once a day and kept in the plugin's store, so a
+// new model or a changed price is known without a new release. The last good table is used meanwhile,
+// and a page that cannot be read or does not parse leaves it as it was. Never blocks the session.
+// The day counts from the last attempt, not the last success: the time is saved before the page is
+// asked for, so a page that keeps failing is still asked once a day, however many sessions start.
+// Sessions that start together all read the store before any of them writes it, so the store alone
+// cannot stop each of them asking: the one that may ask today is the one whose `mkdir` of today's
+// claim folder succeeds, which the file system grants to exactly one process.
+async function refreshPrices($: EngineInterface) {
+  try {
+    const stored = (await $.store.get('prices')) as { at?: unknown; entries?: unknown; triedAt?: unknown } | undefined
+    const saved = stored && typeof stored.at === 'number' && isPriceTable(stored.entries) ? stored : undefined
+    if (saved) setLivePrices(saved.entries as PriceEntry[])
+    const triedAt = typeof stored?.triedAt === 'number' ? stored.triedAt : saved?.at
+    const now = await $.clock.now()
+    if (typeof triedAt === 'number' && now - triedAt < REFRESH_MS) return
+    if (!(await claimToday($, now))) return
+    await $.store.set('prices', saved ? { at: saved.at, entries: saved.entries, triedAt: now } : { triedAt: now })
+    const res = await $.http.fetch(PRICING_URL)
+    const entries = res.ok ? parsePricing(res.text) : null
+    if (!entries) return
+    setLivePrices(entries)
+    await $.store.set('prices', { at: now, entries, triedAt: now })
+  } catch {
+    // The built-in table, or the last good one, stays in use
+  }
+}
+
+// Claims today's read of the price page for this session: true only for the one process whose `mkdir`
+// of today's empty claim folder succeeds. A day is a UTC day. Folders of earlier days are removed. Any
+// failure (the folder cannot be made, `mkdir` cannot run) means no claim, so nobody asks rather than two.
+async function claimToday($: EngineInterface, now: number): Promise<boolean> {
+  const root = (await $.env.get('CLAUDE_CONFIG_DIR')) ?? `${(await $.env.get('HOME')) ?? ''}/.claude`
+  if (!root.startsWith('/')) return false
+  const dir = `${root}/cache-maxxer`
+  const today = Math.floor(now / REFRESH_MS)
+  await $.process.run(['/bin/mkdir', '-p', dir], { timeoutMs: 5_000 })
+  const claim = await $.process.run(['/bin/mkdir', `${dir}/price-read-${today}`], { timeoutMs: 5_000 })
+  if (claim.exitCode !== 0) return false
+  for (const entry of await $.fs.list(dir).catch(() => [])) {
+    const day = /^price-read-([0-9]+)$/.exec(entry.name)
+    if (day && Number(day[1]) < today) await $.process.run(['/bin/rmdir', `${dir}/${entry.name}`], { timeoutMs: 5_000 }).catch(() => undefined)
+  }
+  return true
 }
 
 async function compact($: EngineInterface) {
   try {
     const r = await $.session.compact()
-    if (r.skip) $.ui.toast(`Compact skipped: ${r.skip}`)
+    if (r.skip) await notify($, `Compact skipped: ${r.skip}`)
   } catch (error) {
-    $.ui.toast(error instanceof Error ? error.message : String(error))
+    await notify($, error instanceof Error ? error.message : String(error))
   }
 }
 
-// The toggle persists for new sessions; the rest start from the plugin's settings.
+// Opens the band's detail or closes it. Whether it is open persists for new sessions, as keep warm does.
+async function setExpanded($: EngineInterface, change: boolean | 'toggle') {
+  const next = await update($, expandedAtom, open => (change === 'toggle' ? !open : change))
+  await $.store.set('expanded', next)
+  return next
+}
+
+// Tucks the Desktop band away to its chip or brings it back; remembered for new sessions.
+async function setHidden($: EngineInterface, hidden: boolean) {
+  await update($, hiddenAtom, () => hidden)
+  await $.store.set('hidden', hidden)
+}
+
+// The keep-warm toggle, whether the detail is open and whether the band is tucked away persist for
+// new sessions; the rest start from the plugin's settings.
 async function seedSettings($: EngineInterface, cfg: Cfg) {
   const saved = await $.store.get('keepWarm')
   await update($, settingsAtom, () => ({ ...DEFAULT_SETTINGS, keepWarm: saved === true, lead: cfg.lead, idleCap: cfg.idleCap }))
+  const expanded = await $.store.get('expanded')
+  await update($, expandedAtom, () => expanded === true)
+  const hidden = await $.store.get('hidden')
+  await update($, hiddenAtom, () => hidden === true)
   const now = await $.clock.now()
   await update($, activityAtom, () => now)
 }
@@ -285,37 +401,50 @@ async function resetConversation($: EngineInterface) {
   await update($, breaksAtom, () => [])
   await update($, pingsAtom, () => EMPTY_PINGS)
   await update($, pausedAtom, () => '')
+  await update($, pickerAtom, () => '')
   await update($, tickAtom, () => 0)
 }
 
 // ---- What the controls do ----
 
 function bandActions($: EngineInterface, cfg: Cfg): Actions {
-  return {
-    toggleKeepWarm: () => void toggleKeepWarm($, cfg),
-    warmNow: () => void warmNow($, cfg),
-    compact: () => void compact($),
-    details: () => void $.ui.open(PANE),
+  // Choosing an option sets it and closes the list.
+  const choose = async (set: (s: CacheSettings) => CacheSettings) => {
+    await update($, settingsAtom, set)
+    await update($, pickerAtom, () => '')
   }
-}
-
-function paneActions($: EngineInterface, cfg: Cfg): PaneActions {
   return {
-    toggleKeepWarm: () => void toggleKeepWarm($, cfg),
+    toggleKeepWarm: () => void setKeepWarm($, cfg, 'toggle'),
     warmNow: () => void warmNow($, cfg),
     compact: () => void compact($),
-    close: () => void $.ui.close({ id: PANE_ID }),
-    setLead: value => void update($, settingsAtom, s => ({ ...s, lead: value })),
-    setIdleCap: value => void update($, settingsAtom, s => ({ ...s, idleCap: value })),
+    toggleExpanded: () => void setExpanded($, 'toggle'),
+    hide: () => void setHidden($, true),
+    show: () => void setHidden($, false),
+    togglePicker: which => void update($, pickerAtom, open => (open === which ? '' : which)),
+    setLead: value => void choose(s => ({ ...s, lead: value })),
+    setIdleCap: value => void choose(s => ({ ...s, idleCap: value })),
   }
 }
 
 async function runCommand($: EngineInterface, cfg: Cfg, args: string): Promise<{ text: string } | Record<string, never>> {
-  const [word = '', value = ''] = args.trim().split(/\s+/)
+  const [word = '', value = '', ...extra] = args.trim().split(/\s+/)
+  const usage = { text: `Usage: /${COMMAND} (the detail), /${COMMAND} more|less, /${COMMAND} hide|show, /${COMMAND} warm, /${COMMAND} keep on|off` }
+  // A word the command does not take after an action is a mistake to say, never something to act on.
+  if (extra.length > 0 || (value !== '' && word !== 'keep')) return usage
   if (word === '') {
     // With nothing to draw on (a -p run) the answer is text.
     if ((await $.session.surfaces()).length === 0) return { text: summaryText(await viewOf($, cfg)) }
-    await $.ui.open(PANE)
+    await setHidden($, false)
+    await setExpanded($, true)
+    return {}
+  }
+  if (word === 'hide' || word === 'show') {
+    await setHidden($, word === 'hide')
+    return {}
+  }
+  if (word === 'less' || word === 'more') {
+    if (word === 'more') await setHidden($, false)
+    await setExpanded($, word === 'more')
     return {}
   }
   if (word === 'warm') return { text: pingText(await ping($, cfg)) }
@@ -323,7 +452,7 @@ async function runCommand($: EngineInterface, cfg: Cfg, args: string): Promise<{
     await setKeepWarm($, cfg, value === 'on')
     return { text: `Keep warm is ${value}.` }
   }
-  return { text: 'Usage: /cache, /cache warm, /cache keep on|off' }
+  return usage
 }
 
 export const register: Register = (on, options) => {
@@ -332,14 +461,15 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
     await seedSettings($, cfg)
+    if (cfg.livePrices) void refreshPrices($)
     // After a reload the entry may still be running, and a resumed session has writes to read the length from.
     if ((await read($, cacheAtom)).startedAt > 0) startTicker($, cfg)
     void learnTtl($, cfg)
     try {
       await $.command.register({
-        name: 'cache',
+        name: COMMAND,
         description: 'Show the prompt cache, or keep it warm',
-        argumentHint: '[warm | keep on|off]',
+        argumentHint: '[more | less | hide | show | warm | keep on|off]',
         immediate: true,
       })
     } catch {
@@ -415,23 +545,15 @@ export const register: Register = (on, options) => {
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const v = await viewOf($, cfg)
-    if (e.props.hasSurvey || v.cache.startedAt === 0 || e.props.view.agentId) return next(e)
+    // Before the first request the band draws only once asked for, to say there is no cache yet.
+    if (e.props.hasSurvey || e.props.view.agentId || (v.cache.startedAt === 0 && !v.expanded)) return next(e)
     // What the mods after this one draw here stays, under the band.
     const rest = await next(e)
     const actions = bandActions($, cfg)
     const el = $.ui.resolve(e)
-    if (e.surface === 'desktop') return desktopBand(el as ElementTable<'desktop'>, v, e.props.bodyColumns, actions, rest)
+    if (e.surface === 'desktop') return desktopBand(el as ElementTable<'desktop'>, v, actions, rest)
     return terminalBand(el as ElementTable<'terminal'>, v, e.props.bodyColumns, actions, rest)
   })
 
-  on('ui.render', { component: 'Pane' }, async ($, e, next) => {
-    if (e.requestId !== PANE_ID) return next(e)
-    const v = await viewOf($, cfg)
-    const actions = paneActions($, cfg)
-    const el = $.ui.resolve(e)
-    if (e.surface === 'desktop') return desktopPane(el as ElementTable<'desktop'>, v, actions)
-    return terminalPane(el as ElementTable<'terminal'>, v, e.props.bodyColumns, actions)
-  })
-
-  on('command.run', { command: 'cache' }, async ($, e) => runCommand($, cfg, e.args))
+  on('command.run', { command: COMMAND }, async ($, e) => runCommand($, cfg, e.args))
 }

@@ -2,14 +2,18 @@
   "name": "cache-maxxer",
   "displayName": "Cache Maxxer",
   "version": "1.0.0",
-  "description": "Shows the prompt cache's countdown and hit rate, explains every cache break, and can keep the cache warm on purpose",
+  "description": "Shows the prompt cache's countdown and hit rate above the input box, explains every cache break and cache expiry, and can keep the cache warm to cut Claude Code cost",
   "author": { "name": "Soham Patankar" },
+  "license": "MIT",
+  "homepage": "https://github.com/vayaan-labs/cache-maxxer",
+  "repository": "https://github.com/vayaan-labs/cache-maxxer",
+  "keywords": ["prompt cache", "cache hit rate", "claude code cost", "cache expiry", "keep warm", "statusline", "token usage"],
   "types": "./types/index.d.ts",
   "userConfig": {
     "ttl": {
       "type": "string",
       "title": "Cache length",
-      "description": "How long the prompt cache lives. Auto reads it from your session; 1h suits a subscription, 5m many API keys.",
+      "description": "How long the prompt cache lives. Auto reads it from your session; or fix it at 1h or 5m.",
       "options": ["auto", "1h", "5m"],
       "default": "auto"
     },
@@ -26,6 +30,13 @@
       "description": "Keep warm stops pinging once you have not sent anything for this long, so a forgotten session does not keep spending.",
       "options": ["1h", "3h", "8h", "none"],
       "default": "3h"
+    },
+    "live_prices": {
+      "type": "string",
+      "title": "Read current prices from Anthropic",
+      "description": "On, Cache Maxxer reads the model price table from Anthropic's pricing page once a day, so new models and price changes show without an update. Off, it uses the prices it shipped with.",
+      "options": ["on", "off"],
+      "default": "on"
     }
   }
 }

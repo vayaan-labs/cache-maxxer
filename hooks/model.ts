@@ -53,7 +53,7 @@ export type Snapshot = {
   breaks: readonly BreakInfo[]
 }
 
-// Folds one main-conversation request into what the band and pane read. The request's own start
+// Folds one main-conversation request into what the band reads. The request's own start
 // restarts the entry's life when it read or wrote the cache.
 export function applyRequest(
   s: Snapshot,
@@ -74,7 +74,7 @@ export function applyRequest(
     brk = {
       at: r.startedAt,
       written: tokens.written,
-      costUsd: writeCostUsd(usage.model, tokens.written, r.ttlMs),
+      costUsd: writeCostUsd(usage.model, tokens.written, r.ttlMs, totalInput),
       cause: inferCause({
         gapMs: s.cache.startedAt > 0 ? r.startedAt - s.cache.startedAt : null,
         ttlMs: r.ttlMs,
@@ -94,7 +94,7 @@ export function applyRequest(
     cached: tokens.read + tokens.written,
   }
   const saved = savingsUsd(usage.model, tokens, r.ttlMs)
-  const cost = writeCostUsd(usage.model, tokens.written, r.ttlMs)
+  const cost = writeCostUsd(usage.model, tokens.written, r.ttlMs, totalInput)
   const t = s.totals
   const totals: Totals = {
     requests: t.requests + 1,
