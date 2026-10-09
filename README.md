@@ -4,7 +4,7 @@
 
 # Cache Maxxer
 
-**A Claude Code mod that cuts your costs by 96% by keeping your cache warm, with a live countdown and your real hit rate.**
+**A Claude Code mod that keeps your cache warm, so you pay 96% less to re-read your conversation.**
 
 [**Install**](#get-started) · [Guide](docs/guide.md) · [Privacy](#privacy) · [Changelog](CHANGELOG.md) · [Report a bug](https://github.com/vayaan-labs/cache-maxxer/issues)
 
@@ -16,19 +16,33 @@
 
 </div>
 
-Claude Code keeps a saved copy of your conversation, the prompt cache, so each new message doesn't pay full price to re-read everything before it. That copy quietly expires after five minutes or an hour without a message, and your next one pays to write the whole conversation again: slower, and on a long Opus session well over a dollar.
+Claude Code keeps a saved copy of your conversation, the prompt cache, so each new message doesn't pay full price to re-read everything before it. That copy quietly expires after five minutes or an hour without a message, or when the agent is idle, and your next one pays to write the whole conversation again: slower, and extremely expensive.
 
-Cache Maxxer adds a thin band right above your input box with the time left on that cache and your hit rate, the share of each request read from the cache instead of paid for again. When the cache does get rebuilt, it tells you why. And if you want, it keeps the cache alive while you step away.
+Cache Maxxer adds a thin band right above your input box with the time left on that cache and your hit rate, which is the share of each request read from the cache instead of paid for again. When the cache does get rebuilt, it tells you why. And if you want, it keeps the cache alive while you step away (saving you money when you return!).
 
 ## Get started
 
-1. **Add the Vayaan Labs catalogue.** In the Claude desktop app, open the Directory, choose Plugins, press + and choose Add marketplace, then Add from a repository, and enter `vayaan-labs/plugins`. In a terminal:
+### In the Claude desktop app
+
+1. **Add the Vayaan Labs catalogue.** Open the Directory, choose Plugins, press + and choose Add marketplace, then Add from a repository, and enter `vayaan-labs/plugins`.
+
+   ![The Add marketplace dialog in the Claude desktop app, with two choices: Browse Anthropic sources, and Add from a repository, which syncs a plugin marketplace from a GitHub repository or Git URL.](assets/add-marketplace.png)
+
+2. **Install Cache Maxxer.** Find it in the Vayaan Labs catalogue under Plugins and install it.
+
+3. **Send a message.** The band shows up above the input box once your conversation has a cache, which is after your first reply. If it doesn't, run `/reload-plugins`.
+
+   ![The Cache Maxxer band in the Claude desktop app: a large 58:08 countdown over a draining bar, a one-hour cache, hit rates of 99.91% and 99.58% with rings, and the Keep warm, Warm now, More and Hide buttons.](assets/band-desktop-closed-dark.png)
+
+### In a terminal
+
+1. **Add the Vayaan Labs catalogue.**
 
    ```
    claude plugin marketplace add vayaan-labs/plugins
    ```
 
-2. **Install Cache Maxxer.** Find it in the Vayaan Labs catalogue and install it, or in a terminal:
+2. **Install Cache Maxxer.**
 
    ```
    claude plugin install cache-maxxer@vayaan-labs
@@ -36,7 +50,9 @@ Cache Maxxer adds a thin band right above your input box with the time left on t
 
 3. **Send a message.** The band shows up once your conversation has a cache, which is after your first reply. If Claude Code was already open, run `/reload-plugins` first.
 
-Or paste this prompt to your agent:
+   ![Cache Maxxer in a terminal: a 59:47 countdown with a draining bar, a one-hour cache, hit rates of 95.33% and 68.19%, and the Keep warm, Warm now and More buttons.](assets/band.png)
+
+### Or paste this prompt to your agent
 
 ```
 Install the Cache Maxxer plugin for Claude Code
@@ -60,10 +76,6 @@ Press **More** for the session's numbers, the last 10 requests with any rebuild 
 - **Terminal and desktop app.** A one-line band in the terminal. In the Claude desktop app, a drawn band with a large countdown, hit-rate rings and native menus, which matches your light or dark appearance and fits a narrow window.
 
 <div align="center">
-
-![Cache Maxxer in a terminal: a 59:47 countdown with a draining bar, a one-hour cache, hit rates of 95.33% and 68.19%, and the Keep warm, Warm now and More buttons.](assets/band.png)
-
-*The same band in a terminal, on one line.*
 
 ![The desktop band opened with keep warm on: 547 requests this session at a 99.58% hit rate, about $10 spent writing the cache and about $1,136 saved by reading it, the last 10 requests with no rebuild, the last rebuild after compacting, and the keep-warm settings with what its three pings saved.](assets/band-desktop-keep-warm-open-dark.png)
 
