@@ -99,7 +99,7 @@ On your machine, while the cache length is set to `auto`, it reads the end of yo
 
 ## Contributing
 
-Found a bug? [Open an issue](https://github.com/vayaan-labs/cache-maxxer/issues). Before sending a change, run `claude plugin validate --strict .claude-plugin/plugin.json` and `claude plugin test`, and see the [guide](docs/guide.md#development) to try it without installing. To report a security problem privately, see [SECURITY.md](SECURITY.md).
+Found a bug? [Open an issue](https://github.com/vayaan-labs/cache-maxxer/issues). Want to send a change? [CONTRIBUTING.md](CONTRIBUTING.md) has the two checks to run and how pull requests are merged. To report a security problem privately, see [SECURITY.md](SECURITY.md).
 
 ## Licence
 
