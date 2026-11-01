@@ -139,6 +139,18 @@ async function noteRequest($: EngineInterface, cfg: Cfg, startedAt: number, usag
   if (brk) await notify($, `Cache rebuilt · ${fmtTokens(brk.written)} tokens re-written · ${brk.cause}`)
 }
 
+// Windows: HOME may be unset (USERPROFILE is) and paths use `\`; `/` works everywhere on Windows.
+async function configRoot($: EngineInterface): Promise<string> {
+  const home = (await $.env.get('HOME')) ?? (await $.env.get('USERPROFILE')) ?? ''
+  return ((await $.env.get('CLAUDE_CONFIG_DIR')) ?? `${home}/.claude`).replace(/\\/g, '/')
+}
+const isWindows = (path: string) => /^[A-Za-z]:\//.test(path)
+// PowerShell stand-in for `tail -c TAIL_BYTES`: seeks from the end and writes the raw bytes to stdout.
+const winTail = (path: string) =>
+  `$f=[IO.File]::Open('${path.replace(/'/g, "''")}','Open','Read','ReadWrite,Delete');` +
+  `$n=[Math]::Min($f.Length,${TAIL_BYTES});[void]$f.Seek(-$n,'End');$b=New-Object byte[] $n;` +
+  `$r=$f.Read($b,0,$n);$f.Close();$o=[Console]::OpenStandardOutput();$o.Write($b,0,$r);$o.Flush()`
+
 // Reads how long an entry lives from the newest cache write in the session transcript. The transcript
 // may not hold the write yet when a turn ends, so the ticker asks again (at most every RETRY_MS)
 // until it has been seen.
@@ -152,14 +164,24 @@ async function learnTtl($: EngineInterface, cfg: Cfg) {
   try {
     const id = await $.session.id()
     if (rt.lookup.id !== id || rt.lookup.path === '') {
-      const root = (await $.env.get('CLAUDE_CONFIG_DIR')) ?? `${(await $.env.get('HOME')) ?? ''}/.claude`
-      const found = await $.process.run(['/usr/bin/find', `${root}/projects`, '-maxdepth', '2', '-name', `${id}.jsonl`], { timeoutMs: 15_000 })
-      rt.lookup.path = found.stdout.split('\n').find(line => line.trim() !== '') ?? ''
+      const root = await configRoot($)
+      if (isWindows(root)) {
+        rt.lookup.path = ''
+        for (const dir of await $.fs.list(`${root}/projects`)) {
+          const p = `${root}/projects/${dir.name}/${id}.jsonl`
+          if (dir.kind === 'dir' && (await $.fs.exists(p))) { rt.lookup.path = p; break }
+        }
+      } else {
+        const found = await $.process.run(['/usr/bin/find', `${root}/projects`, '-maxdepth', '2', '-name', `${id}.jsonl`], { timeoutMs: 15_000 })
+        rt.lookup.path = found.stdout.split('\n').find(line => line.trim() !== '') ?? ''
+      }
       rt.lookup.id = id
     }
     if (rt.lookup.path === '') return
     // Only the end of the file is read: a long session's transcript is large.
-    const tail = await $.process.run(['/usr/bin/tail', '-c', String(TAIL_BYTES), rt.lookup.path], { timeoutMs: 15_000 })
+    const tail = isWindows(rt.lookup.path)
+      ? await $.process.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', winTail(rt.lookup.path)], { timeoutMs: 15_000 })
+      : await $.process.run(['/usr/bin/tail', '-c', String(TAIL_BYTES), rt.lookup.path], { timeoutMs: 15_000 })
     const ms = tail.exitCode === 0 ? parseTtl(tail.stdout) : null
     if (ms !== null) await update($, cacheAtom, c => (c.ttlMs === ms ? c : { ...c, ttlMs: ms }))
   } catch {
@@ -343,16 +365,20 @@ async function refreshPrices($: EngineInterface) {
 // of today's empty claim folder succeeds. A day is a UTC day. Folders of earlier days are removed. Any
 // failure (the folder cannot be made, `mkdir` cannot run) means no claim, so nobody asks rather than two.
 async function claimToday($: EngineInterface, now: number): Promise<boolean> {
-  const root = (await $.env.get('CLAUDE_CONFIG_DIR')) ?? `${(await $.env.get('HOME')) ?? ''}/.claude`
-  if (!root.startsWith('/')) return false
+  const root = await configRoot($)
+  const win = isWindows(root)
+  if (!win && !root.startsWith('/')) return false
   const dir = `${root}/cache-maxxer`
   const today = Math.floor(now / REFRESH_MS)
-  await $.process.run(['/bin/mkdir', '-p', dir], { timeoutMs: 5_000 })
-  const claim = await $.process.run(['/bin/mkdir', `${dir}/price-read-${today}`], { timeoutMs: 5_000 })
+  // cmd's mkdir makes missing parents and, like plain mkdir, fails when the folder exists: still atomic.
+  const sh = (op: 'mkdir' | 'rmdir', path: string) =>
+    $.process.run(win ? ['cmd.exe', '/d', '/c', op, path.replace(/\//g, '\\')] : [`/bin/${op}`, path], { timeoutMs: 5_000 })
+  if (!win) await $.process.run(['/bin/mkdir', '-p', dir], { timeoutMs: 5_000 })
+  const claim = await sh('mkdir', `${dir}/price-read-${today}`)
   if (claim.exitCode !== 0) return false
   for (const entry of await $.fs.list(dir).catch(() => [])) {
     const day = /^price-read-([0-9]+)$/.exec(entry.name)
-    if (day && Number(day[1]) < today) await $.process.run(['/bin/rmdir', `${dir}/${entry.name}`], { timeoutMs: 5_000 }).catch(() => undefined)
+    if (day && Number(day[1]) < today) await sh('rmdir', `${dir}/${entry.name}`).catch(() => undefined)
   }
   return true
 }

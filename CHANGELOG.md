@@ -4,6 +4,10 @@ All notable changes to Cache Maxxer are listed here. The format follows [Keep a 
 
 ## [Unreleased]
 
+### Fixed
+
+- On Windows, cache length `auto` now reads the cache's length from the session transcript, and live prices are read again: the transcript lookup and the daily price-page claim no longer call `/usr/bin/find`, `/usr/bin/tail` and `/bin/mkdir`, and a config folder such as `C:/Users/<you>/.claude` (or one found through `USERPROFILE` when `HOME` is unset) is accepted.
+
 ## [1.0.0] - 2026-10-09
 
 The first public release.
